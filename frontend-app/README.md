@@ -1,190 +1,80 @@
-# Operations Copilot Frontend
+# Operations Copilot frontend
 
-The frontend provides a ChatGPT-style interface for the Logistics Operations RAG Assistant described in the [project overview](../README.md). Users can manage conversations, send messages, attach documents, and read assistant replies in a responsive workspace.
+A ChatGPT-style workspace built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Lucide icons. Includes responsive navigation, searchable server-backed chat history, new/delete actions, sample replies, stop/copy controls, and keyboard composition.
 
-## Directory status
+## Run locally
 
-This directory currently contains documentation only. The application source, dependency files, tests, and Docker configuration have not yet been added to this repository folder.
+Start the PostgreSQL database and NestJS backend in `../backend` first; see that project's README. Then use Node.js 24 (specified in `.nvmrc`):
 
-The details below describe the existing reference frontend and the setup to use after importing its source. The run commands require the corresponding `package.json`, lockfile, `.nvmrc`, Dockerfile, and Compose configuration to be present. Backend services must also be available.
-
-## Application features
-
-| Feature | Behaviour |
-| --- | --- |
-| Chat workspace | Responsive layout with desktop navigation and a mobile sidebar. |
-| Conversations | Create, reopen, search, paginate, and delete conversations. |
-| Message composer | Enter sends a message; Shift+Enter inserts a new line. |
-| Typing effect | Shows a typing indicator for at least one second, then reveals new replies in small chunks with a cursor. |
-| Stop response | Stops the visual reveal; reopening the conversation displays the full saved reply. |
-| Copy response | Copies completed assistant text to the clipboard. |
-| Attachments | Select files using the paperclip button or drag them onto the composer. Remove queued files before sending. |
-| Saved files | Download attachments from messages after reopening or reloading a conversation. |
-| Error recovery | Displays connection and validation errors, and retains drafts and selected files when a request fails. |
-
-Saved conversation history opens immediately without replaying the typing effect. The typing effect is frontend playback of a complete API response; it is not server-side token streaming.
-
-### Attachment support
-
-- Up to **five files per message**.
-- Maximum **5 MiB per file** (5,242,880 bytes).
-- Supported extensions: `.pdf`, `.docx`, `.xlsx`, `.txt`, `.md`, `.csv`, `.json`, `.png`, `.jpg`, `.jpeg`, `.webp`, and `.gif`.
-- Files can be sent with or without accompanying text.
-- The browser checks file selection limits; the backend also validates size, names, and file content.
-- File bytes are stored with the message in PostgreSQL through the backend API. Deleting a conversation also deletes its attachments.
-
-Uploading a file does not automatically add it to the RAG knowledge base. Document and image analysis are not connected in the reference implementation.
-
-## Technology stack
-
-| Technology | Purpose |
-| --- | --- |
-| Next.js 16 with App Router | Application framework and production server. |
-| React 19 | Interactive components and client state. |
-| TypeScript | Shared types and compile-time checks. |
-| Tailwind CSS 4 and application CSS | Styling and responsive layouts. |
-| Lucide React | Interface icons. |
-| Playwright | Browser tests for chat, typing effects, and attachments. |
-| Docker and Docker Compose | Container builds and local stack startup. |
-
-## Architecture
-
-```text
-Browser / Next.js frontend
-          |
-          | HTTP API: JSON messages and multipart file uploads
-          v
-NestJS backend / orchestrator
-          |
-          v
-PostgreSQL: conversations, messages, and attachment bytes
+```bash
+nvm install
+nvm use
+npm ci
+npm run dev
 ```
 
-The frontend communicates with the NestJS API; it does not connect directly to PostgreSQL. The backend owns persistence, upload validation, request limits, and future hosted model integration.
+Open http://localhost:3000. Enter sends a message; Shift+Enter adds a new line.
 
-## Local development
+The default API URL is `http://127.0.0.1:3001/api`. To change it, copy `.env.example` to `.env.local`, set `NEXT_PUBLIC_API_URL`, then restart/rebuild Next.js. This URL is public browser configuration, not a place for provider keys.
 
-After the application source has been added:
+## Current scope
 
-1. Install Node.js 24 and npm. The reference application includes a `.nvmrc` file for nvm users.
-2. Start the NestJS backend and its PostgreSQL database.
-3. From `frontend-app`, run:
+Conversations and messages are persisted in PostgreSQL through the NestJS API. The frontend no longer writes chat history to localStorage. Previous browser-only demo conversations are not automatically uploaded or removed. The sidebar searches the server and paginates history; longer conversations can load earlier messages.
 
-   ```bash
-   nvm use
-   npm ci
-   npm run dev
-   ```
+Assistant replies are predefined backend samples, explicitly labelled. No hosted model, retrieval service, or multi-agent workflow is connected. This is a shared local workspace without authentication or PII redaction; use sample content. The backend supplies request limits and validation. Saved history is not a model-response cache.
 
-Open [http://localhost:3000](http://localhost:3000). If nvm is not installed, use Node.js 24 directly and run the npm commands.
+New replies show a typing indicator for at least one second from submission, then reveal two words every 45 milliseconds with a typing cursor. This is frontend playback of a complete API response. Saved history opens immediately without replaying. Stop freezes the visible text; reopening the conversation shows the full saved reply.
 
-### API configuration
+The UI stops waiting when you cancel. A request already accepted by the server may still be saved; reopen the conversation to refresh it. Failed message requests retain the draft, and retries reuse a request ID to prevent duplicate stored turns.
 
-The default browser-facing API URL is:
+## Backend integration
 
-```dotenv
-NEXT_PUBLIC_API_URL=http://127.0.0.1:3001/api
+`src/lib/chat-client.ts` implements the NestJS HTTP contract, response validation, and AbortSignal support. `src/components/chat/use-conversations.ts` handles server state and UI transitions. Extend the shared types when adding streamed responses, source citations, and agent status events. Remove demo labels only when real inference is connected.
+
+Hosted inference keys stay in the backend environment. Never put secrets in `NEXT_PUBLIC_*` variables.
+
+## Checks
+
+Keep the backend and PostgreSQL running while testing:
+
+```bash
+npm run lint
+npm run typecheck
+npx playwright install chromium
+npm test
+npm run build
+npm start
 ```
 
-To override it, copy `.env.example` to `.env.local`, update the URL, and restart the development server. For Docker or production builds, set this variable when building the image: Next.js embeds public environment variables in the frontend bundle.
+Alternatively, point `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` at an installed compatible Chrome executable. Tests reuse/start Next.js on port 3000, exercise the real backend, and delete only the conversations they create. They require the backend URL configured for the frontend. CI should run `npx playwright install --with-deps chromium` first.
 
-This URL must be reachable from the user's browser. The backend's CORS allowlist must include the frontend origin. Hosted inference credentials belong in the backend environment; never put secrets in `NEXT_PUBLIC_*` variables.
+Typing-effect tests can run with controlled API responses while the backend is stopped: `npm test -- tests/reply-playback.spec.ts`. These cover the one-second delay, incremental text, stopping, navigation, deletion, errors, and saved-history playback.
 
-## Run with Docker
+## Docker
 
-These instructions apply after the Docker files and backend source have been imported. The reference Compose configuration expects this layout:
-
-```text
-iitkgp-genai-agentic-ai-capstone/
-├── frontend-app/
-│   ├── Dockerfile
-│   ├── compose.yaml
-│   └── ...application source
-└── backend/
-    ├── Dockerfile
-    ├── compose.yaml
-    ├── .env
-    └── ...backend source
-```
-
-The frontend Compose file includes `../backend/compose.yaml` and reads `../backend/.env`. Update its include paths if the backend is placed elsewhere. Configure the backend environment before starting the stack.
-
-With Docker Desktop running, execute this single command from `frontend-app`:
+With Docker Desktop running, start the frontend, NestJS API, and PostgreSQL together from this folder:
 
 ```bash
 docker compose --profile app up -d --build --wait
 ```
 
-This builds and starts the frontend, NestJS backend, and PostgreSQL. The backend applies database migrations before startup, and the frontend waits for the API health check.
+Open http://localhost:3000. The API documentation is available at http://localhost:3001/api/docs. The command builds both application images, starts PostgreSQL, runs database migrations, and waits for health checks. The frontend starts after the API is healthy.
 
-| Service | Local address |
-| --- | --- |
-| Frontend | [http://localhost:3000](http://localhost:3000) |
-| API documentation | [http://localhost:3001/api/docs](http://localhost:3001/api/docs) |
-| API health check | [http://localhost:3001/api/health](http://localhost:3001/api/health) |
-| PostgreSQL | `127.0.0.1:5433` |
+`compose.yaml` includes `../backend/compose.yaml` and reads the existing `../backend/.env`. It uses the same `operations-copilot` project name and PostgreSQL volume as backend-only startup, preserving existing chats and attachments. Keep the frontend and backend folders beside each other. Docker Compose 2.20.3 or newer is required for includes.
 
-Useful commands from the same folder:
+Inspect the stack with `docker compose --profile app ps`. Stop all three services with `docker compose --profile app stop`; the database volume is preserved. To view frontend logs, run `docker compose --profile app logs -f frontend`.
 
-```bash
-# Check service status
-docker compose --profile app ps
+The frontend defaults to the browser-accessible API at `http://127.0.0.1:3001/api`. For another API URL, run `NEXT_PUBLIC_API_URL=https://your-api.example/api docker compose --profile app up -d --build --wait`. Next.js embeds this public URL at build time. The image uses standalone output and runs as the unprivileged `node` user. All published ports bind to loopback for local use.
 
-# Follow frontend logs
-docker compose --profile app logs -f frontend
+## References
 
-# Stop services while preserving database data
-docker compose --profile app stop
-```
+- [Next.js installation](https://nextjs.org/docs/app/getting-started/installation)
+- [Next.js standalone deployment](https://nextjs.org/docs/app/api-reference/config/next-config-js/output)
 
-The reference configuration uses a persistent PostgreSQL volume for both chat history and attachments. Its Dockerfile uses Next.js standalone output and runs the frontend as an unprivileged user.
+## Chat attachments
 
-## Available npm commands
+Use the paperclip button or drop files onto the composer. Up to five files can be selected per message, with a maximum of 5 MB per file. Supported extensions: PDF, DOCX, XLSX, TXT, MD, CSV, JSON, PNG, JPG/JPEG, WEBP, and GIF. Remove a selected file with its X button before sending. A file can also be sent without accompanying text.
 
-These scripts are provided by the reference application's `package.json`:
+Selected files are sent as multipart form data and stored with the user message in PostgreSQL. Saved messages show download links after a reload. Downloading returns the original bytes. Failed uploads retain the selected files and draft so the user can retry. The existing typing effect applies to replies after upload as well.
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Start the development server. |
-| `npm run build` | Create a production build. |
-| `npm start` | Run the production server after building. |
-| `npm run lint` | Run ESLint. |
-| `npm run typecheck` | Run TypeScript checks. |
-| `npm test` | Run Playwright browser tests. |
-
-Before the first browser test run, install the test browser:
-
-```bash
-npx playwright install chromium
-```
-
-Chat and attachment integration tests require a running backend and database. Typing-effect tests use controlled API responses and can run independently:
-
-```bash
-npm test -- tests/reply-playback.spec.ts
-```
-
-## Expected application structure
-
-```text
-frontend-app/
-├── src/
-│   ├── app/                     # Routes, layout, metadata, and global styles
-│   ├── components/chat/         # Workspace, sidebar, composer, and messages
-│   │   ├── use-conversations.ts # API-backed conversation state
-│   │   └── use-reply-playback.ts # Typing indicator and gradual reply display
-│   └── lib/
-│       ├── chat.ts              # Conversation, message, and attachment types
-│       ├── chat-client.ts       # API client and response validation
-│       └── attachments.ts       # File selection limits and size formatting
-├── tests/                      # Browser tests
-├── .env.example
-├── .nvmrc
-├── Dockerfile
-├── compose.yaml
-└── package.json
-```
-
-## Current limitations
-
-The reference frontend uses explicitly labelled demo replies from the backend. Hosted inference, document retrieval, source citations, and agent execution are not yet connected. Authentication, user-specific workspaces, and PII redaction are also pending; the current application is intended for a local, shared workspace using sample content.
+File analysis is not connected. The demo reply explicitly says the files were saved and have not been read or analysed. Uploading an attachment does not automatically add it to a RAG corpus.
