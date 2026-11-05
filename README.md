@@ -4,7 +4,7 @@ Capstone project for the **Executive Post Graduate Programme in Generative AI an
 
 ## Project overview
 
-The planned project is a **Logistics Operations RAG Assistant** for the AeroVelo Logistics Global case study. It explores how retrieval-augmented generation (RAG) can help users find answers grounded in organizational documents.
+The planned project is a **Logistics Operations RAG Assistant**. It explores how retrieval-augmented generation (RAG) can help users find answers grounded in organizational documents.
 
 The reference material covers logistics operations, supply chain, compliance, governance, finance, legal, and human resources policies.
 
@@ -32,4 +32,4 @@ Environment setup and execution instructions will be documented when the impleme
 
 ## Academic context
 
-This repository documents coursework and capstone development for the programme. The project description refers to the supplied AeroVelo Logistics Global case study.
+This repository documents coursework and capstone development for the programme.
