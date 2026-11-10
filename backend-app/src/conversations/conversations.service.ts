@@ -127,16 +127,18 @@ export class ConversationsService {
     );
     if (existing) return existing;
     this.checkVersion(conversation, dto.expectedVersion);
+    // PostgreSQL is the source of truth, including chats predating agent checkpoints.
     const history = await this.db.getRepository(Message).find({
       where: { conversationId: id },
-      order: { sequence: 'DESC' },
-      take: 40,
+      order: { sequence: 'ASC' },
+      select: { role: true, content: true },
+      loadEagerRelations: false,
     });
-    // Do not hold a database lock while awaiting a future hosted inference request.
     const content = await this.orchestrator.reply(
-      history.reverse(),
+      id,
       contentText,
       uploads.length,
+      history.map(({ role, content }) => ({ role, content })),
     );
     return this.db.transaction(async (manager) => {
       const current = await this.lock(manager, id);

@@ -107,11 +107,11 @@ export function Sidebar({
           <span className="status-dot" />
           Saved on the server
         </div>
-        <p>Chat history is stored on the server. Replies are demo samples.</p>
+        <p>Chat history is stored on the server. Review sources in assistant replies.</p>
         <div className="workspace-label">
           <span className="workspace-avatar">OC</span>
           <div>
-            Personal workspace<small>Frontend preview</small>
+            Personal workspace<small>Local workspace</small>
           </div>
         </div>
       </div>

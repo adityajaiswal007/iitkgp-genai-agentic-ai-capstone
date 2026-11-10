@@ -14,6 +14,6 @@ export class AppController {
     } catch {
       throw new ServiceUnavailableException();
     }
-    return { status: 'ok', database: 'up', orchestrator: 'demo' };
+    return { status: 'ok', database: 'up', orchestrator: 'agent' };
   }
 }

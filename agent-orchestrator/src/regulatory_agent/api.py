@@ -21,6 +21,12 @@ from .models import DemoModel, QwenModel
 from .tools import CorpusTools, DEMO_DOCUMENTS, HttpCorpusTools
 
 
+class ConversationMessage(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    role: Literal['user', 'assistant']
+    content: str = Field(min_length=1, max_length=16000)
+
+
 class ExecutionRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     question: str = Field(min_length=1, max_length=4000)
@@ -28,6 +34,7 @@ class ExecutionRequest(BaseModel):
     as_of: date | None = None
     fiscal_year: str | None = Field(default=None, pattern=r'^\d{4}-\d{2}$')
     include_trace: bool = False
+    history: list[ConversationMessage] | None = Field(default=None, max_length=200)
 
     @field_validator('question')
     @classmethod
@@ -197,7 +204,8 @@ def create_app(settings: Settings | None = None):
             state = request.app.state.agent.ask(
                 conversation_id,payload.question,
                 as_of=payload.as_of.isoformat() if payload.as_of else None,
-                fiscal_year=payload.fiscal_year)
+                fiscal_year=payload.fiscal_year,
+                messages=[m.model_dump() for m in payload.history] if payload.history is not None else None)
             answer = Answer.model_validate(state['answer'])
             return ExecutionResponse(
                 execution_id=str(uuid.uuid4()), conversation_id=conversation_id,

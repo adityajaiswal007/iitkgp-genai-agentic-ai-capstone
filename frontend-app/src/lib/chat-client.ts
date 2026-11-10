@@ -178,7 +178,10 @@ export const chatApi = {
       `/conversations/${id}/messages`,
       (value) => {
         const body = object(value);
-        if (!Array.isArray(body.messages) || body.mode !== "demo")
+        if (
+          !Array.isArray(body.messages) ||
+          !["agent", "qwen", "demo"].includes(String(body.mode))
+        )
           throw new Error("Invalid chat turn response.");
         return {
           conversation: conversation(body.conversation),

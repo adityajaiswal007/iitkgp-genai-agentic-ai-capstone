@@ -1,10 +1,10 @@
 # Operations Copilot frontend
 
-A ChatGPT-style workspace built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Lucide icons. Includes responsive navigation, searchable server-backed chat history, new/delete actions, sample replies, stop/copy controls, and keyboard composition.
+A ChatGPT-style workspace built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Lucide icons. Includes responsive navigation, searchable server-backed chat history, new/delete actions, agent replies, stop/copy controls, and keyboard composition.
 
 ## Run locally
 
-Start the PostgreSQL database and NestJS backend in `../backend` first; see that project's README. Then use Node.js 24 (specified in `.nvmrc`):
+Start the PostgreSQL database and NestJS backend in `../backend-app` first; see that project's README. Then use Node.js 24 (specified in `.nvmrc`):
 
 ```bash
 nvm install
@@ -21,7 +21,7 @@ The default API URL is `http://127.0.0.1:3001/api`. To change it, copy `.env.exa
 
 Conversations and messages are persisted in PostgreSQL through the NestJS API. The frontend no longer writes chat history to localStorage. Previous browser-only demo conversations are not automatically uploaded or removed. The sidebar searches the server and paginates history; longer conversations can load earlier messages.
 
-Assistant replies are predefined backend samples, explicitly labelled. No hosted model, retrieval service, or multi-agent workflow is connected. This is a shared local workspace without authentication or PII redaction; use sample content. The backend supplies request limits and validation. Saved history is not a model-response cache.
+Assistant replies come from the backend → agent-orchestrator → retrieval/Qwen query path. Configure the key in `../agent-orchestrator/.env` and start all four services as described in the root README. Offline agent demo inference is labelled in its answer. This is a shared local workspace without authentication or PII redaction; use sample content. The backend supplies request limits and validation. Saved history is not a model-response cache.
 
 New replies show a typing indicator for at least one second from submission, then reveal two words every 45 milliseconds with a typing cursor. This is frontend playback of a complete API response. Saved history opens immediately without replaying. Stop freezes the visible text; reopening the conversation shows the full saved reply.
 
@@ -29,7 +29,7 @@ The UI stops waiting when you cancel. A request already accepted by the server m
 
 ## Backend integration
 
-`src/lib/chat-client.ts` implements the NestJS HTTP contract, response validation, and AbortSignal support. `src/components/chat/use-conversations.ts` handles server state and UI transitions. Extend the shared types when adding streamed responses, source citations, and agent status events. Remove demo labels only when real inference is connected.
+`src/lib/chat-client.ts` implements the NestJS HTTP contract, response validation, and AbortSignal support. `src/components/chat/use-conversations.ts` handles server state and UI transitions. Extend the shared types when adding streamed responses, source citations, and agent status events. The response parser accepts `agent`, `qwen`, and `demo` service modes.
 
 Hosted inference keys stay in the backend environment. Never put secrets in `NEXT_PUBLIC_*` variables.
 
@@ -77,4 +77,13 @@ Use the paperclip button or drop files onto the composer. Up to five files can b
 
 Selected files are sent as multipart form data and stored with the user message in PostgreSQL. Saved messages show download links after a reload. Downloading returns the original bytes. Failed uploads retain the selected files and draft so the user can retry. The existing typing effect applies to replies after upload as well.
 
-File analysis is not connected. The demo reply explicitly says the files were saved and have not been read or analysed. Uploading an attachment does not automatically add it to a RAG corpus.
+File analysis is not connected. Replies explicitly say attached files have not been read or analysed. Uploading an attachment does not automatically add it to a RAG corpus.
+
+## Conversation URLs
+
+The selected chat is stored as `/?conversation=<conversation-uuid>`. Opening or refreshing that
+URL loads the same conversation, even if it is outside the currently loaded sidebar page.
+Selecting another chat adds a browser-history entry; Back and Forward restore the corresponding
+chat. New chat clears only the conversation parameter, and the root URL stays a new chat on
+refresh. A newly created chat receives its URL before inference finishes. Deleted or invalid
+links show a notice and return to a new chat instead of opening an unrelated conversation.

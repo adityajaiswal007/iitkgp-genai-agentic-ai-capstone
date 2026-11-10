@@ -4,11 +4,11 @@ services:
   agent:
     environment:
       AGENT_MODE: qwen
-      QWEN_CA_CERT: /certs/qwen-ca.crt
+      QWEN_CA_CERT: /agent-orchestrator/certificate/vm05-ca.crt
     volumes:
       - type: bind
-        source: ${QWEN_CA_CERT:?Set QWEN_CA_CERT to the absolute host CA certificate path}
-        target: /certs/qwen-ca.crt
+        source: ${QWEN_CA_CERT:?Set QWEN_CA_CERT to the host CA certificate path}
+        target: /agent-orchestrator/certificate/vm05-ca.crt
         read_only: true
         bind:
           create_host_path: false

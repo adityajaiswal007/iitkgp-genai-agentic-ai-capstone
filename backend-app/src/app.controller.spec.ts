@@ -19,3 +19,13 @@ describe('configuration boundary', () => {
     ).toThrow('FRONTEND_ORIGINS');
   });
 });
+
+it('rejects invalid agent URLs and deadlines', () => {
+  expect(() =>
+    validateEnvironment({ ...valid, AGENT_BASE_URL: 'file:///etc/passwd' }),
+  ).toThrow('AGENT_BASE_URL');
+  expect(() =>
+    validateEnvironment({ ...valid, AGENT_REQUEST_TIMEOUT_MS: 'NaN' }),
+  ).toThrow('AGENT_REQUEST_TIMEOUT_MS');
+  expect(validateEnvironment(valid).AGENT_REQUEST_TIMEOUT_MS).toBe(130000);
+});

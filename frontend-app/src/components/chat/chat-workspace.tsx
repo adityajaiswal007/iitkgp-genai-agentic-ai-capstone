@@ -127,7 +127,7 @@ export function ChatWorkspace() {
               onClick={() => about.current?.showModal()}
             >
               <span className="status-dot" />
-              Demo mode
+              About replies
               <Info size={13} />
             </button>
             <button
@@ -225,8 +225,7 @@ export function ChatWorkspace() {
               onStop={chat.cancel}
             />
             <p className="composer-disclaimer">
-              Frontend demo · Responses are samples. Review important
-              information.
+              AI answers can contain mistakes. Review sources and important information.
             </p>
           </div>
         </main>
@@ -242,16 +241,17 @@ export function ChatWorkspace() {
           </span>
           <button
             className="icon-button"
-            aria-label="Close demo information"
+            aria-label="Close workspace information"
             onClick={() => about.current?.close()}
           >
             <X size={18} />
           </button>
         </div>
-        <h2 id="about-title">Your workspace, ready to connect.</h2>
+        <h2 id="about-title">About your workspace</h2>
         <p>
-          Replies are predefined examples from the backend orchestrator. No
-          language model, agents, or document retrieval service is connected.
+          Queries run through the agent service using its configured model and
+          document corpus. Demo inference is labelled in the answer when enabled.
+          Attachments are saved for download; they are not added to the retrieval corpus.
         </p>
         <p>
           Conversations are saved on the server until you delete them. This

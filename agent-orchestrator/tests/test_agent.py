@@ -42,7 +42,7 @@ class AgentTests(unittest.TestCase):
         s = b.ask('t1', 'What about the follow-up?')
         self.assertEqual(s['plan']['authority'], 'RBI')
         self.assertEqual(len(s['history']), 2)
-        self.assertEqual(s['steps'], 6)
+        self.assertEqual(s['steps'], 7)
         isolated = b.ask('t2', 'What about the follow-up?')
         self.assertEqual(isolated['status'], 'clarify')
         self.assertEqual(len(isolated['history']), 1)
@@ -95,6 +95,42 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(s['status'], 'answered')
         self.assertEqual(s['steps'], 10)
         self.assertEqual(s['revision'], 1)
+
+    def test_revision_reuses_status_for_the_same_corpus_snapshot(self):
+        model = ScriptedModel({'critic': [{'decision':'revise', 'issues':['Check the cited edition.']}],
+                               'planner': [None, {'action':'answer', 'query':'RBI complaint context',
+                                                   'authority':'RBI', 'tools':['fetch_passages','lookup_document_status']}]})
+        s = self.agent(model).ask('t', 'RBI demo complaint')
+        self.assertEqual(s['status'], 'answered')
+        self.assertEqual(s['steps'], 10)
+        self.assertEqual(sum(e['kind']=='tool' and e['name']=='lookup_document_status' for e in s['trace']), 1)
+
+    def test_revision_rechecks_status_when_corpus_snapshot_changes(self):
+        class ChangingTools(CorpusTools):
+            fetches = 0
+            def fetch_passages(self, args):
+                self.fetches += 1
+                result = super().fetch_passages(args)
+                if self.fetches > 1:
+                    for passage in result['passages']:
+                        passage['corpus_snapshot'] = 'changed-snapshot'
+                return result
+        model = ScriptedModel({'critic': [{'decision':'revise', 'issues':['Check the cited edition.']}],
+                               'planner': [None, {'action':'answer', 'query':'RBI complaint context',
+                                                   'authority':'RBI', 'tools':['fetch_passages','lookup_document_status']}]})
+        s = self.agent(model, tools=ChangingTools(DEMO_DOCUMENTS)).ask('t', 'RBI demo complaint')
+        self.assertEqual(sum(e['kind']=='tool' and e['name']=='lookup_document_status' for e in s['trace']), 2)
+        self.assertNotEqual(s['status'], 'answered')
+
+    def test_new_followup_always_gets_fresh_search_passages_and_status(self):
+        model = ScriptedModel({'planner': [None, {'action':'answer','query':'RBI complaint follow-up',
+                                                   'authority':'RBI','tools':['fetch_passages']}]})
+        agent = self.agent(model)
+        agent.ask('t', 'RBI demo complaint')
+        state = agent.ask('t', 'What about their contact reference?')
+        self.assertEqual(state['status'], 'answered')
+        self.assertEqual([e['name'] for e in state['trace'] if e['kind']=='tool'],
+                         ['search_documents','fetch_passages','lookup_document_status'])
 
     def test_repeated_plan_cannot_loop(self):
         model = ScriptedModel({'critic': [{'decision':'revise', 'issues':['Search again.']}]})

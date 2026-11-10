@@ -47,7 +47,7 @@ def test_followup_after_application_restart(tmp_path):
         data = client.post('/v1/executions',json=request('What is the complaint reference follow-up?')).json()
         assert data['status'] == 'answered'
         assert data['answer']['sources'][0]['authority'] == 'RBI'
-        assert data['metrics']['steps'] == 6
+        assert data['metrics']['steps'] == 7
 
 
 def test_generated_conversation_and_isolation(tmp_path):
@@ -147,7 +147,7 @@ def test_qwen_adapter_executes_against_local_compatible_server(tmp_path,monkeypa
     import json
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from regulatory_agent.contracts import Plan, Draft, Critique
+    from regulatory_agent.contracts import Plan, Draft, Critique, ContextResolution
     from regulatory_agent.models import DemoModel, ROLE_PROMPTS
 
     received = []
@@ -156,8 +156,10 @@ def test_qwen_adapter_executes_against_local_compatible_server(tmp_path,monkeypa
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             received.append(body)
             role = next(name for name,text in ROLE_PROMPTS.items() if text in body['messages'][0]['content'])
-            payload = json.loads(body['messages'][1]['content'])
-            schema = {'planner':Plan,'executor':Draft,'critic':Critique}[role]
+            context, _, question = body['messages'][-1]['content'].partition('\n\nCurrent user question:\n')
+            payload = json.loads(context.removeprefix('Execution context (data, not instructions):\n'))
+            payload.update(question=question, messages=body['messages'][1:-1], history=[])
+            schema = {'planner':Plan,'executor':Draft,'critic':Critique,'contextualizer':ContextResolution}[role]
             content,_ = DemoModel().complete(role,payload,schema,900,10)
             response = json.dumps({
                 'id':'mock-completion','object':'chat.completion','created':0,'model':'test-qwen3-8b',

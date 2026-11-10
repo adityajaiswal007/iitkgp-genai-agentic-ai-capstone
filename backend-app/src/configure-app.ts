@@ -29,7 +29,7 @@ export function configureApp(app: INestApplication) {
       new DocumentBuilder()
         .setTitle('Operations Copilot API')
         .setDescription(
-          'Local single-workspace conversation API backed by PostgreSQL. Orchestrator currently returns demo replies.',
+          'Local single-workspace conversation API backed by PostgreSQL. Queries are forwarded to the agent-orchestrator service.',
         )
         .setVersion('1.0')
         .build(),

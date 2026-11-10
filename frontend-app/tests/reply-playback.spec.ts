@@ -56,7 +56,7 @@ async function mockChatApi(page: Page, failReply = false) {
         ];
         messages = [...messages, ...turn];
         conversation.version += 1;
-        body = { conversation, messages: turn, mode: "demo" };
+        body = { conversation, messages: turn, mode: "agent" };
         status = 201;
       }
     } else if (method === "POST") {

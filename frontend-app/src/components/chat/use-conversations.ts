@@ -5,6 +5,35 @@ import type { Conversation, ConversationSummary } from "@/lib/chat";
 import { ChatApiError, chatApi } from "@/lib/chat-client";
 import { useReplyPlayback } from "./use-reply-playback";
 
+type UrlChange = "push" | "replace" | "none";
+
+function conversationIdFromUrl() {
+  return new URL(window.location.href).searchParams.get("conversation");
+}
+
+function updateConversationUrl(id: string | null, change: UrlChange = "push") {
+  if (change === "none") return;
+  const url = new URL(window.location.href);
+  if (id === null) url.searchParams.delete("conversation");
+  else url.searchParams.set("conversation", id);
+  if (url.href === window.location.href) return;
+  window.history[change === "replace" ? "replaceState" : "pushState"](
+    null,
+    "",
+    url.pathname + url.search + url.hash,
+  );
+}
+
+async function loadConversation(id: string, signal?: AbortSignal) {
+  if (!/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(id))
+    throw new ChatApiError("Invalid conversation link.", 400);
+  return chatApi.get(id, signal);
+}
+
+function missingConversation(error: unknown) {
+  return error instanceof ChatApiError && [400, 404].includes(error.status);
+}
+
 export function useConversations() {
   const playback = useReplyPlayback();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -53,14 +82,24 @@ export function useConversations() {
     const selectedAtStart = navigation.current;
     async function load() {
       try {
-        const saved = await refreshHistory(request.signal);
-        if (saved[0] && navigation.current === selectedAtStart) {
-          const current = await chatApi.get(saved[0].id, request.signal);
+        await refreshHistory(request.signal);
+        const id = conversationIdFromUrl();
+        if (id !== null && navigation.current === selectedAtStart) {
+          const current = await loadConversation(id, request.signal);
           if (navigation.current === selectedAtStart) setActive(current);
         }
-        setReady(true);
+        if (!request.signal.aborted) setReady(true);
       } catch (error) {
-        if (!request.signal.aborted) reportError(error);
+        if (!request.signal.aborted) {
+          if (missingConversation(error)) {
+            if (navigation.current === selectedAtStart) {
+              setActive(null);
+              updateConversationUrl(null, "replace");
+              reportError(error);
+            }
+            setReady(true);
+          } else reportError(error);
+        }
       }
     }
     void load();
@@ -89,6 +128,17 @@ export function useConversations() {
     };
   }, [search, ready, refreshHistory]);
 
+  // Reattach with the current handlers so browser navigation cancels any active reply.
+  useEffect(() => {
+    const onPopState = () => {
+      const id = conversationIdFromUrl();
+      if (id === null) newChat("none");
+      else void selectChat(id, "none");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  });
+
   function abortRequest(clearPlayback = true) {
     navigation.current += 1;
     controller.current?.abort();
@@ -107,24 +157,30 @@ export function useConversations() {
     );
     void refreshHistory(undefined, searchRef.current).catch(reportError);
   }
-  function newChat() {
+  function newChat(change: UrlChange = "push") {
+    updateConversationUrl(null, change);
     abortRequest();
     pendingTurn.current = null;
     setActive(null);
     setNotice("");
   }
-  async function selectChat(id: string) {
+  async function selectChat(id: string, change: UrlChange = "push") {
+    updateConversationUrl(id, change);
     abortRequest();
     pendingTurn.current = null;
     const request = new AbortController();
     controller.current = request;
+    setActive(null);
     setBusy(true);
     setNotice("");
     try {
-      const current = await chatApi.get(id, request.signal);
+      const current = await loadConversation(id, request.signal);
       if (!request.signal.aborted) setActive(current);
     } catch (error) {
-      if (!request.signal.aborted) reportError(error);
+      if (!request.signal.aborted) {
+        if (missingConversation(error)) updateConversationUrl(null, "replace");
+        reportError(error);
+      }
     } finally {
       if (controller.current === request) {
         controller.current = null;
@@ -135,7 +191,12 @@ export function useConversations() {
   async function deleteChat(id: string) {
     try {
       await chatApi.remove(id);
-      if (active?.id === id || playback.preview?.id === id) newChat();
+      if (
+        active?.id === id ||
+        playback.preview?.id === id ||
+        conversationIdFromUrl() === id
+      )
+        newChat("replace");
       setConversations((previous) => previous.filter((chat) => chat.id !== id));
     } catch (error) {
       reportError(error);
@@ -213,6 +274,8 @@ export function useConversations() {
         );
         target = { ...created, messages: [], firstLoadedPage: 1 };
       }
+      request.signal.throwIfAborted();
+      updateConversationUrl(target.id);
       const turn =
         retry?.id === target.id &&
         retry.content === text &&
@@ -268,11 +331,23 @@ export function useConversations() {
     }
   }
   async function retryLoad() {
+    const selectedAtStart = navigation.current;
+    const id = conversationIdFromUrl();
     try {
       await refreshHistory();
-      setNotice("");
+      if (id !== null && navigation.current === selectedAtStart) {
+        const current = await loadConversation(id);
+        if (navigation.current === selectedAtStart) setActive(current);
+      }
+      if (navigation.current === selectedAtStart) setNotice("");
       setReady(true);
     } catch (error) {
+      if (navigation.current !== selectedAtStart) return;
+      if (missingConversation(error)) {
+        setActive(null);
+        updateConversationUrl(null, "replace");
+        setReady(true);
+      }
       reportError(error);
     }
   }
@@ -285,7 +360,7 @@ export function useConversations() {
     ready,
     busy,
     notice,
-    newChat,
+    newChat: () => newChat(),
     selectChat,
     deleteChat,
     send,

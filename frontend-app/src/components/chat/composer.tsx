@@ -154,7 +154,7 @@ export function Composer({ busy, ready, onSend, onStop }: Props) {
         aria-label="Message Operations Copilot"
         placeholder="Message Operations Copilot…"
         value={draft}
-        maxLength={8000}
+        maxLength={4000}
         rows={1}
         disabled={!ready || busy}
         onChange={(event) => setDraft(event.target.value)}

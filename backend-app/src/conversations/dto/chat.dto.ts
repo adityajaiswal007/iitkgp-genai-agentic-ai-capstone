@@ -28,10 +28,10 @@ export class RenameConversationDto {
   title: string;
 }
 export class SendMessageDto {
-  @ApiProperty({ maxLength: 8000, example: 'Help me plan a vendor review.' })
+  @ApiProperty({ maxLength: 4000, example: 'Help me plan a vendor review.' })
   @Transform(trim)
   @IsString()
-  @Length(0, 8000)
+  @Length(0, 4000)
   content: string;
   @ApiProperty({
     format: 'uuid',

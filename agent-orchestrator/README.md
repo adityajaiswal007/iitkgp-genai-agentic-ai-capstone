@@ -4,9 +4,43 @@ Python 3.11+ project with a FastAPI service for the Qwen3 planner â†’ executor â
 The notebook remains a standalone teaching/demo artifact. The API imports normal Python modules;
 it never executes notebook cells.
 
-**Default mode is offline `demo` with a synthetic corpus.** Set `RAG_BASE_URL` to use the
+Scope includes AVL internal governance, regional leadership assignments, and compliance officer
+rosters alongside regulatory documents. These read-only questions do not need an explicit AVL
+prefix or financial year: the planner searches the AVL corpus before deciding evidence is absent.
+During revision, status is reused only for unchanged document IDs and corpus snapshots so the
+final critic still fits the ten-step limit. The local Qwen configuration allows 30 seconds per
+model/tool attempt within the existing 120-second query deadline; output remains capped at 900
+(the hosted endpoint accepts at most 1,024 output tokens).
+
+**The supplied `.env.example` enables Qwen with local retrieval.** Without environment settings,
+the Python default remains offline `demo` with a synthetic corpus. Set `RAG_BASE_URL` to use the
 Track B retrieval service and its AVL policy corpus. Demo inference is a deterministic test double;
 use Qwen mode for generated planner/executor/critic answers. A demo is not actual regulatory guidance.
+
+## Conversation context
+
+`POST /v1/executions` accepts optional `history`, an ordered array of
+`{ "role": "user" | "assistant", "content": "..." }` messages preceding the current question.
+The backend supplies the complete committed PostgreSQL transcript on every turn, so older
+chats and lost/legacy agent checkpoints recover their context. Only user/assistant roles are
+accepted; no caller-supplied system instructions are allowed.
+
+The model receives these as actual chat messages for planning, drafting and review, rather
+than a nested JSON history blob. Standalone API clients can omit history and reuse
+`conversation_id`; SQLite retains the complete compact transcript, including supplied history,
+across restarts. New answers are stored as valid JSON without retrieved passage bodies. The old
+six-turn, 1,500-character question and 2,000-character serialized-answer cuts are removed.
+
+History resolves people, topics, and pronouns; it is not trusted evidence for new facts.
+Before scope checking, a dedicated context step binds plural references to named people/entities
+from earlier assistant messages. Those bindings must actually occur in the transcript. The
+original latest request is preserved, and its attribute plus bound entities becomes the search
+query; this prevents a rewrite from losing "email" or narrowing a plural request to one person.
+Every new question retrieves and checks evidence again. The context step is charged to the
+existing model/token budget and ten-step limit; a normal follow-up uses seven attempts. The existing 64-KiB request limit,
+200-message API limit and model token budget still apply. Oversized backend transcripts receive
+an explicit context-limit error rather than being silently truncated. A model token-budget
+stop also reports a limitation; conversation storage in PostgreSQL is retained.
 
 ## Start with Docker
 
@@ -14,7 +48,8 @@ From this directory:
 
 ```sh
 cp .env.example .env
-docker compose up --build
+# Fill QWEN_API_KEY first. This starts retrieval and mounts the configured CA.
+docker compose -f compose.yaml -f compose.retrieval.yaml -f compose.qwen.yaml up --build
 ```
 
 - Swagger UI: http://localhost:8000/docs
@@ -95,9 +130,9 @@ Your curl command maps to these three connection settings in `.env`:
 
 ```dotenv
 AGENT_MODE=qwen
-QWEN_BASE_URL=https://103.42.50.41:1034/v1
+QWEN_BASE_URL=https://103.42.50.41:1033/v1
 QWEN_API_KEY=your-real-api-key
-QWEN_CA_CERT=/Users/aditya.jaiswal/Downloads/vm05-ca.crt
+QWEN_CA_CERT=./certificate/vm05-ca.crt
 ```
 
 The model defaults to `Qwen/Qwen3-8B`; `QWEN_MODEL` is an optional override. Use the URL ending
@@ -106,7 +141,7 @@ the trusted **CA certificate/bundle** corresponding to curl's `--cacert`, not a 
 TLS certificate and hostname verification remain enabled. An invalid or missing configured CA
 file fails at startup; there is no insecure fallback.
 
-For a fresh configuration, copy `.env.qwen.example` to `.env` and replace the API-key placeholder.
+For a fresh configuration, copy `.env.qwen.example` to `.env` and fill `QWEN_API_KEY`.
 Keep an existing `.env` and edit these fields if it already contains your settings.
 
 Local Python uses the certificate path directly:
@@ -121,8 +156,8 @@ For Docker, add the certificate-mount override:
 docker compose -f compose.yaml -f compose.qwen.yaml up -d --build
 ```
 
-The override mounts the host certificate read-only at `/certs/qwen-ca.crt` and configures that
-container path automatically. In `.env`, supply an absolute host path or `${HOME}/Downloads/vm05-ca.crt`;
+The override mounts the host certificate read-only at `/agent-orchestrator/certificate/vm05-ca.crt` and configures that
+container path automatically. In `.env`, supply `./certificate/vm05-ca.crt` or an absolute host path;
 local Python also expands home/environment variables. The host file must exist. The certificate
 and API key are not copied into the image. This override enables Qwen mode; the ordinary Compose
 command remains suitable for offline demos without a certificate.
@@ -133,7 +168,7 @@ Python callers can also configure the adapter explicitly:
 from regulatory_agent.models import QwenModel
 
 model = QwenModel(
-    base_url="https://103.42.50.41:1034/v1",
+    base_url="https://103.42.50.41:1033/v1",
     api_key=your_api_key,
     ca_cert="/path/to/vm05-ca.crt",
 )

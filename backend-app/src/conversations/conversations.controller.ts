@@ -123,7 +123,7 @@ export class ConversationsController {
   @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({
     summary:
-      'Generate a demo turn and atomically store the user and assistant messages',
+      'Execute an agent query and atomically store the user and assistant messages',
   })
   send(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

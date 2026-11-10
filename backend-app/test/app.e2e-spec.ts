@@ -1,11 +1,17 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+import { createServer, type Server } from 'node:http';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 
 let app: INestApplication;
+let agent: Server;
+const agentRequests: {
+  conversation_id: string;
+  history: { role: string; content: string }[];
+}[] = [];
 const ids: string[] = [];
 async function startApp() {
   const { AppModule } = await import('../dist/app.module.js');
@@ -27,9 +33,25 @@ beforeAll(async () => {
   if (testDatabase === process.env.DB_NAME)
     throw new Error('Tests require a distinct database');
   process.env.DB_NAME = testDatabase;
+  // Exercise the backend over HTTP without consuming hosted model tokens.
+  agent = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    agentRequests.push(JSON.parse(body));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        mode: 'qwen',
+        answer_text: 'Evidence-backed answer [test:1]',
+      }),
+    );
+  });
+  await new Promise<void>((resolve) => agent.listen(0, '127.0.0.1', resolve));
+  process.env.AGENT_BASE_URL = `http://127.0.0.1:${(agent.address() as { port: number }).port}`;
   app = await startApp();
 }, 30000);
 afterAll(async () => {
+  if (agent) await new Promise<void>((resolve) => agent.close(() => resolve()));
   if (!app) return;
   for (const id of ids)
     await request(app.getHttpServer()).delete(`/api/conversations/${id}`);
@@ -89,7 +111,7 @@ it('stores ordered turns, handles retries, and rejects conflicting or forged inp
   expect(
     first.body.messages.map((item: { role: string }) => item.role),
   ).toEqual(['user', 'assistant']);
-  expect(first.body.mode).toBe('demo');
+  expect(first.body.mode).toBe('agent');
   const retry = await request(app.getHttpServer())
     .post(url)
     .send(input)
@@ -120,6 +142,33 @@ it('stores ordered turns, handles retries, and rejects conflicting or forged inp
     .expect(200);
   expect(list.body.pagination.totalItems).toBe(2);
   expect(list.body.data[0].role).toBe('assistant');
+});
+it('forwards both saved roles on a follow-up in the same conversation', async () => {
+  const chat = await create();
+  const url = `/api/conversations/${chat.id}/messages`;
+  await request(app.getHttpServer())
+    .post(url)
+    .send({
+      content: 'Regional leadership assignments',
+      expectedVersion: 0,
+      requestId: randomUUID(),
+    })
+    .expect(201);
+  await request(app.getHttpServer())
+    .post(url)
+    .send({
+      content: 'share their email',
+      expectedVersion: 1,
+      requestId: randomUUID(),
+    })
+    .expect(201);
+  expect(agentRequests.at(-1)).toMatchObject({
+    conversation_id: chat.id,
+    history: [
+      { role: 'user', content: 'Regional leadership assignments' },
+      { role: 'assistant', content: 'Evidence-backed answer [test:1]' },
+    ],
+  });
 });
 it('allows only one writer for a shared conversation version', async () => {
   const conversation = await create();

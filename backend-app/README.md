@@ -1,6 +1,6 @@
 # Operations Copilot backend
 
-NestJS 12 / TypeScript orchestrator API with PostgreSQL 17, TypeORM migrations, Swagger, request validation, and a separate orchestration module. The Next.js frontend in `../frontend` now saves and retrieves conversations through this API.
+NestJS 12 / TypeScript orchestrator API with PostgreSQL 17, TypeORM migrations, Swagger, request validation, and a separate orchestration module. The Next.js frontend in `../frontend-app` now saves and retrieves conversations through this API.
 
 ## Start everything in Docker
 
@@ -90,13 +90,27 @@ The response contains `{ conversation, messages: [userMessage, assistantMessage]
 
 Retrying the same request ID and content returns the already-saved turn. Reusing an ID for different content returns 409. A stale conversation version also returns 409; reload before trying a new turn. A database row lock serializes commits, and both messages are saved in one transaction. Orchestration runs before the transaction so a future hosted inference call does not hold a database lock. Concurrent retries can still execute inference more than once before commit; database idempotency prevents duplicate saved turns, not duplicate provider charges.
 
-Titles are trimmed and limited to 120 characters; user messages to 8,000 characters. Clients cannot supply an assistant/system role, timestamps, or message IDs. Invalid UUIDs, unknown fields, and invalid pagination return 400. Missing conversations return 404. Errors use `{ error: { code, message, details? } }`; internal exceptions do not expose database details or stack traces.
+Titles are trimmed and limited to 120 characters; user messages to 4,000 characters. Clients cannot supply an assistant/system role, timestamps, or message IDs. Invalid UUIDs, unknown fields, and invalid pagination return 400. Missing conversations return 404. Errors use `{ error: { code, message, details? } }`; internal exceptions do not expose database details or stack traces.
 
 ## Orchestrator boundary
 
-`src/orchestrator/orchestrator.service.ts` currently returns explicitly labelled sample replies. No hosted LLM, retrieval, or multi-agent workflow is connected. Replace its `reply(history, content)` method when integrating the hosted ≤8B provider. Context currently contains at most the latest 40 persisted messages; add token budgeting, timeouts, cancellation semantics, and evidence checks when connecting real inference.
+`src/orchestrator/orchestrator.service.ts` calls `AGENT_BASE_URL/v1/executions` with
+`question`, the backend conversation UUID as `conversation_id`, and the complete ordered
+PostgreSQL `history` of user/assistant messages preceding that question. Set `AGENT_BASE_URL`
+(default `http://127.0.0.1:8000`), optional matching `AGENT_API_KEY`, and
+`AGENT_REQUEST_TIMEOUT_MS` (default 130000). Qwen credentials belong only in
+`../agent-orchestrator/.env`. Start retrieval and the agent before querying; see the root README.
+The Docker API profile uses `host.docker.internal:8000` by default.
 
-An HTTP client abort stops waiting; it does not undo an accepted server-side operation. Re-read the conversation to reconcile server state. Provider credentials belong in backend environment variables, never in browser variables.
+Replies preserve the agent's answer text and citations. Agent outages, busy responses, and
+invalid responses fail the turn rather than returning canned content. The backend reports
+`mode: agent`; demo inference on the agent service is explicitly labelled in the answer.
+Reasoning state lives in the agent, while PostgreSQL supplies authoritative chat context on every
+request. The agent sends that transcript to Qwen as user/assistant messages. History exceeding
+200 messages or a 64-KiB request is rejected explicitly instead of silently truncated. Attachments are
+stored for download, not automatically analysed or indexed. Deleting a UI chat does not remove
+its agent checkpoint. A browser abort stops waiting but does not undo agent execution.
+Concurrent retries can still execute inference more than once before a deduplicated commit.
 
 ## Frontend connection
 

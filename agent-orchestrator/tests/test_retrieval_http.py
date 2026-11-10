@@ -27,7 +27,14 @@ def test_http_error_mapping(status, exception):
             tools.fetch_passages(FetchArgs(document_ids=['OP-204']))
 
 
-def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path):
+@pytest.mark.parametrize('question,document_id,citation,text', [
+    ('What is AVL Valve-B pressure?', 'BOM-FLT-H2NEX', 'valve:1', 'Maximum operating pressure: 2,800 psi'),
+    ('share the Regional Operational Leadership Assignments', 'RGM-2026-PDF', 'rgm:page1',
+     'Regional Operational Leadership Assignments: Americas — Sarah Jenkins; EMEA — Marcus Vance; APAC — Kenji Sato.'),
+    ('Who are the regional compliance officers?', 'RGM-2026-PDF', 'rgm:page2',
+     'Regional Compliance Officer Roster: Americas — Patricia Gomez; EMEA — Dr. Klaus Richter; APAC — Aisha Al-Rashid.'),
+])
+def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path, question, document_id, citation, text):
     import json
     from unittest.mock import patch
     from fastapi.testclient import TestClient
@@ -40,15 +47,15 @@ def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path):
         paths.append(name)
         if name == 'search_documents':
             assert payload['authority'] == 'AVL'
-            data = {'hits':[{'document_id':'BOM-FLT-H2NEX','score':1.0}]}
+            data = {'hits':[{'document_id':document_id,'score':1.0}]}
         elif name == 'fetch_passages':
-            assert 'Valve-B' in payload['query']
-            data = {'passages':[{'citation_id':'valve:1','document_id':'BOM-FLT-H2NEX','authority':'AVL',
-                    'title':'Valve specifications','text':'Maximum operating pressure: 2,800 psi',
-                    'page':1,'section':'3.1','source_url':'urn:avl:BOM-FLT-H2NEX','corpus_snapshot':'test'}]}
+            assert payload['query'] == question
+            data = {'passages':[{'citation_id':citation,'document_id':document_id,'authority':'AVL',
+                    'title':'Corpus document','text':text,
+                    'page':1,'section':'Test section','source_url':'urn:avl:'+document_id,'corpus_snapshot':'test'}]}
         else:
             assert 'query' not in payload
-            data = {'documents':[{'document_id':'BOM-FLT-H2NEX','status':'applicable','reason':'Catalog interval.'}]}
+            data = {'documents':[{'document_id':document_id,'status':'applicable','reason':'Catalog interval.'}]}
         return httpx.Response(200,json=data)
     class TestTools(HttpCorpusTools):
         def __init__(self, *args):
@@ -57,8 +64,9 @@ def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path):
     settings = Settings(database_path=tmp_path/'state.sqlite', retrieval_base_url='http://localhost:8001')
     with patch('regulatory_agent.api.HttpCorpusTools',TestTools):
         with TestClient(create_app(settings)) as client:
-            data = client.post('/v1/executions',json={'question':'What is AVL Valve-B pressure?','as_of':'2026-11-10'}).json()
+            data = client.post('/v1/executions',json={'question':question,'as_of':'2026-11-10'}).json()
             assert data['status'] == 'answered' and data['corpus'] == 'retrieval'
-            assert data['answer']['sources'][0]['citation_id'] == 'valve:1'
+            assert data['answer']['sources'][0]['citation_id'] == citation
+            assert text in data['answer_text']
             assert client.get('/health').json()['corpus'] == 'retrieval'
     assert paths == ['search_documents','fetch_passages','lookup_document_status']

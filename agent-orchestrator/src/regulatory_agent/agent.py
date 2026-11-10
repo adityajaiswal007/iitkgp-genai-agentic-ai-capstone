@@ -10,9 +10,9 @@ from pydantic import ValidationError
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from .contracts import (Limits, AgentState, ControlledStop, RetryableModelError,
-                        PermanentModelError, parse_json, call_with_timeout, Plan, Draft, Critique)
+                        PermanentModelError, parse_json, call_with_timeout, Plan, Draft, Critique, ContextResolution)
 from .tools import TOOL_SCHEMAS, tool_attempt
-from .models import build_messages
+from .models import build_messages, history_messages
 
 class RegulatoryAgent:
     """Single-process notebook service. One active request per conversation at a time."""
@@ -24,9 +24,11 @@ class RegulatoryAgent:
         self.connection = sqlite3.connect(str(db_path), check_same_thread=False)
         self.saver = SqliteSaver(self.connection)
         graph = StateGraph(AgentState)
-        for name in ('planner','executor','critic','finish'):
+        for name in ('resolve_context','planner','executor','critic','finish'):
             graph.add_node(name, getattr(self, name))
-        graph.add_edge(START, 'planner')
+        graph.add_edge(START, 'resolve_context')
+        graph.add_conditional_edges('resolve_context', lambda s:s['route'],
+                                    {'planner':'planner','finish':'finish'})
         graph.add_conditional_edges('planner', lambda s:s['route'],
                                     {'executor':'executor','finish':'finish'})
         graph.add_conditional_edges('executor', lambda s:s['route'],
@@ -121,12 +123,33 @@ class RegulatoryAgent:
                  answer={'claims':[], 'limitations':[exc.message], 'message':'I cannot verify an answer from the available evidence.'})
         return s
 
+    def resolve_context(self, s):
+        if not s['messages']:
+            s['route'] = 'planner'
+            return s
+        try:
+            resolved = self.model_json(s, 'contextualizer', {
+                'question':s['question'], 'messages':s['messages']}, ContextResolution)
+            referents = list(dict.fromkeys(resolved.referents))
+            prior_answers = '\n'.join(m['content'] for m in s['messages'] if m['role']=='assistant').casefold()
+            if any(name.casefold() not in prior_answers for name in referents):
+                raise ControlledStop('INVALID_CONTEXT', 'Could not verify the referenced entities in this conversation.')
+            # Preserve the user's request verbatim; bind identities without letting a rewrite
+            # change the requested attribute or narrow a plural reference to a single region.
+            if referents:
+                s['resolved_question'] = s['question']+'\nReferenced entities: '+', '.join(referents)
+            s['route'] = 'planner'
+            return s
+        except ControlledStop as exc:
+            return self.stop(s, exc)
+
     def planner(self, s):
         try:
             plan = self.model_json(s,'planner',{
-                'question':s['question'], 'history':s['history'][-6:],
+                'question':s['resolved_question'], 'history':s['history'], 'messages':s['messages'],
                 'as_of':s['as_of'], 'fiscal_year':s['fiscal_year'],
                 'feedback':s['feedback'], 'previous_plan':s['plan'],
+                'revision':s['revision'],
                 'remaining_attempts':self.limits.max_steps-s['steps']}, Plan)
             if plan.action != 'answer':
                 s.update(plan=plan.model_dump(), status='clarify' if plan.action=='clarify' else 'refused',
@@ -134,8 +157,17 @@ class RegulatoryAgent:
                 return s
             if not plan.authority or not plan.query.strip():
                 raise ControlledStop('INVALID_PLAN', 'Planner did not identify an authority and search query.')
-            if not s['revision'] and plan.tools != list(TOOL_SCHEMAS):
-                raise ControlledStop('INVALID_PLAN', 'Initial retrieval must search, fetch and inspect status in order.')
+            if not s['revision']:
+                if s['resolved_question'] != s['question']:
+                    bound = s['resolved_question']
+                    if len(bound) <= 1500:
+                        plan.query = bound
+                    else:
+                        entities = bound.rsplit('\nReferenced entities: ',1)[-1]
+                        plan.query = plan.query[:1500-len(entities)-1]+' '+entities
+                # Every new user turn has empty evidence. The engine owns this dependency
+                # chain even if the model mistakes a conversational follow-up for a revision.
+                plan.tools = list(TOOL_SCHEMAS)
             if len(set(plan.tools)) != len(plan.tools) or not plan.tools:
                 raise ControlledStop('INVALID_PLAN', 'Tools must be unique and nonempty.')
             if plan.tools != [name for name in TOOL_SCHEMAS if name in plan.tools]:
@@ -158,6 +190,8 @@ class RegulatoryAgent:
         try:
             plan = s['plan']
             ids = list(dict.fromkeys(p['document_id'] for p in s['evidence']))
+            previous_snapshots = {(p['document_id'], p['corpus_snapshot']) for p in s['evidence']}
+            checked_ids = {d['document_id'] for d in s['document_status']}
             for name in plan['tools']:
                 if name == 'search_documents':
                     data = self.run_tool(s, name, {'query':plan['query'], 'authority':plan['authority'],
@@ -175,13 +209,21 @@ class RegulatoryAgent:
                 else:
                     if not ids:
                         raise ControlledStop('INVALID_PLAN', 'No document IDs for status lookup.')
+                    current_snapshots = {(p['document_id'], p['corpus_snapshot']) for p in s['evidence']}
+                    # Re-fetching the same immutable catalog snapshot does not invalidate its status.
+                    # Save the remaining attempt for the critic; changed snapshots are always rechecked.
+                    if (s['revision'] and 'search_documents' not in plan['tools']
+                            and current_snapshots and current_snapshots <= previous_snapshots
+                            and set(ids) <= checked_ids):
+                        self.event(s, 'control', 'reused_document_status')
+                        continue
                     s['document_status'] = self.run_tool(s, name, {
                         'document_ids':ids,'as_of':s['as_of'],'fiscal_year':s['fiscal_year']})['documents']
             applicable = {d['document_id'] for d in s['document_status'] if d['status']=='applicable'}
             if not s['evidence'] or not any(p['document_id'] in applicable for p in s['evidence']):
                 raise ControlledStop('APPLICABILITY_UNKNOWN', 'No evidence is verified applicable to the supplied date/year.')
             draft = self.model_json(s,'executor',{
-                'question':s['question'], 'history':s['history'][-3:],
+                'question':s['resolved_question'], 'history':s['history'], 'messages':s['messages'],
                 'as_of':s['as_of'],'fiscal_year':s['fiscal_year'],
                 'evidence':s['evidence'],'document_status':s['document_status'],
                 'feedback':s['feedback']}, Draft)
@@ -209,7 +251,8 @@ class RegulatoryAgent:
         try:
             issues = self.citation_issues(s)
             verdict = self.model_json(s,'critic',{
-                'question':s['question'],'as_of':s['as_of'],'fiscal_year':s['fiscal_year'],
+                'question':s['resolved_question'], 'messages':s['messages'],
+                'as_of':s['as_of'],'fiscal_year':s['fiscal_year'],
                 'draft':s['draft'],'evidence':s['evidence'],
                 'document_status':s['document_status'], 'deterministic_issues':issues}, Critique)
             self.event(s,'review','verdict',decision=verdict.decision,
@@ -235,15 +278,16 @@ class RegulatoryAgent:
             return self.stop(s, exc)
 
     def finish(self, s):
-        # Store only released answers in bounded conversation memory, never rejected drafts.
-        entry = {'question':s['question'][:1500], 'authority':s['plan'].get('authority'),
+        # Store complete released answers without copying retrieved passage bodies into memory.
+        entry = {'question':s['question'], 'authority':s['plan'].get('authority'),
                  'as_of':s['as_of'], 'fiscal_year':s['fiscal_year'], 'status':s['status'],
-                 'answer':json.dumps(s['answer'], ensure_ascii=False)[:2000]}
-        s['history'] = (s['history']+[entry])[-6:]
+                 'answer':json.dumps({k:v for k,v in s['answer'].items() if k != 'sources'}, ensure_ascii=False)}
+        s['history'] = s['history']+[entry]
+        s['messages'] = s['messages']+history_messages([entry])
         self.event(s,'control','finished',status=s['status'], tokens_charged=s['tokens_charged'])
         return s
 
-    def ask(self, thread_id, question, *, as_of=None, fiscal_year=None):
+    def ask(self, thread_id, question, *, as_of=None, fiscal_year=None, messages=None):
         if self._closed:
             raise ValueError('Agent is closed.')
         if not isinstance(thread_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',thread_id):
@@ -262,8 +306,8 @@ class RegulatoryAgent:
             resolved_date = as_of or (history[-1]['as_of'] if history else date.today().isoformat())
             resolved_year = fiscal_year or (history[-1].get('fiscal_year') if history else None)
             state = AgentState(
-                question=question.strip(), as_of=resolved_date, fiscal_year=resolved_year,
-                history=history, plan={}, evidence=[], document_status=[], draft={}, feedback=[],
+                question=question.strip(), resolved_question=question.strip(), as_of=resolved_date, fiscal_year=resolved_year,
+                history=history, messages=messages if messages is not None else previous.get('messages', history_messages(history)), plan={}, evidence=[], document_status=[], draft={}, feedback=[],
                 answer={}, status='running', revision=0, steps=0, tokens_charged=0,
                 trace=[], seen_actions=[], started_at=time.time(), route='planner')
             return self.graph.invoke(state, config)

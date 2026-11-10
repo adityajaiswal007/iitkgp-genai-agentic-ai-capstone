@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from langgraph.graph import StateGraph, START, END
@@ -22,6 +22,10 @@ ToolName = Literal['search_documents', 'fetch_passages', 'lookup_document_status
 
 class Schema(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
+
+class ContextResolution(Schema):
+    referents: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(max_length=12)
+
 
 class Plan(Schema):
     action: Literal['answer', 'clarify', 'refuse']
@@ -114,9 +118,11 @@ class Limits:
 
 class AgentState(TypedDict):
     question: str
+    resolved_question: str
     as_of: str
     fiscal_year: str | None
     history: list[dict]
+    messages: list[dict]
     plan: dict
     evidence: list[dict]
     document_status: list[dict]

@@ -42,7 +42,7 @@ function AssistantMessage({
           <Sparkles size={16} />
         </span>
         <strong>Operations Copilot</strong>
-        <span className="demo-response-label">Demo response</span>
+        <span className="demo-response-label">Assistant response</span>
       </div>
       <div className="message-content">
         {message.content}
