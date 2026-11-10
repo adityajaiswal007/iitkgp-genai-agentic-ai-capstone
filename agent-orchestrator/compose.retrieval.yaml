@@ -1,0 +1,29 @@
+# docker compose -f compose.yaml -f compose.retrieval.yaml up --build
+services:
+  agent:
+    environment:
+      RAG_BASE_URL: http://retrieval:8001
+      RAG_API_KEY: ${RAG_API_KEY:-}
+    depends_on:
+      retrieval:
+        condition: service_healthy
+  retrieval:
+    build: ../document-retrieval
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      RAG_API_KEY: ${RAG_API_KEY:-}
+      RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-local}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      RAG_EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-}
+      RAG_EMBEDDING_API_KEY: ${RAG_EMBEDDING_API_KEY:-}
+    volumes:
+      - retrieval-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health',timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 4
+      start_period: 300s
+volumes:
+  retrieval-data:

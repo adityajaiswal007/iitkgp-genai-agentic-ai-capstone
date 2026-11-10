@@ -1,0 +1,28 @@
+services:
+  agent:
+    image: regulatory-agent:api
+    build:
+      context: .
+      target: api
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      AGENT_MODE: ${AGENT_MODE:-demo}
+      AGENT_DATABASE_PATH: /data/conversations.sqlite
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-10}
+      AGENT_MAX_REVISIONS: ${AGENT_MAX_REVISIONS:-1}
+      AGENT_TOKEN_BUDGET: ${AGENT_TOKEN_BUDGET:-48000}
+      AGENT_MAX_OUTPUT_TOKENS: ${AGENT_MAX_OUTPUT_TOKENS:-900}
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-15}
+      AGENT_QUERY_SECONDS: ${AGENT_QUERY_SECONDS:-120}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-}
+      QWEN_MODEL: ${QWEN_MODEL:-Qwen/Qwen3-8B}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_CA_CERT: ${QWEN_CA_CERT:-}
+      QWEN_JSON_MODE: ${QWEN_JSON_MODE:-none}
+      QWEN_DISABLE_THINKING: ${QWEN_DISABLE_THINKING:-0}
+    volumes:
+      - agent-state:/data
+volumes:
+  agent-state:

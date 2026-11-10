@@ -1,0 +1,38 @@
+import { ValidationPipe, type INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { json } from 'express';
+import helmet from 'helmet';
+import { ApiExceptionFilter } from './common/api-exception.filter.js';
+
+export function configureApp(app: INestApplication) {
+  const config = app.get(ConfigService);
+  app.setGlobalPrefix('api');
+  app.use(helmet());
+  app.use(json({ limit: '64kb' }));
+  app.enableCors({
+    origin: config.get<string[]>('FRONTEND_ORIGINS'),
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      validationError: { target: false, value: false },
+    }),
+  );
+  app.useGlobalFilters(new ApiExceptionFilter());
+  SwaggerModule.setup('api/docs', app, () =>
+    SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder()
+        .setTitle('Operations Copilot API')
+        .setDescription(
+          'Local single-workspace conversation API backed by PostgreSQL. Orchestrator currently returns demo replies.',
+        )
+        .setVersion('1.0')
+        .build(),
+    ),
+  );
+}

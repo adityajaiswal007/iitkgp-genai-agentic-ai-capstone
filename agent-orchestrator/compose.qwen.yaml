@@ -1,0 +1,14 @@
+# Add to compose.yaml when using a private CA certificate.
+# The host path comes from .env; the client inside Docker uses the mounted path.
+services:
+  agent:
+    environment:
+      AGENT_MODE: qwen
+      QWEN_CA_CERT: /certs/qwen-ca.crt
+    volumes:
+      - type: bind
+        source: ${QWEN_CA_CERT:?Set QWEN_CA_CERT to the absolute host CA certificate path}
+        target: /certs/qwen-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
