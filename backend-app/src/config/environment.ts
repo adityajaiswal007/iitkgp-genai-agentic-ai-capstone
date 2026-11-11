@@ -1,3 +1,5 @@
+import { rateLimitConfig } from './rate-limit.config.js';
+
 export function validateEnvironment(env: Record<string, unknown>) {
   function text(key: string, fallback?: string) {
     const value = env[key] ?? fallback;
@@ -58,6 +60,7 @@ export function validateEnvironment(env: Record<string, unknown>) {
     throw new Error('AGENT_REQUEST_TIMEOUT_MS must be between 1 and 600000');
   return {
     ...env,
+    ...rateLimitConfig(env),
     AGENT_BASE_URL: agentUrl,
     AGENT_REQUEST_TIMEOUT_MS: agentTimeout,
     HOST: text('HOST', '127.0.0.1'),

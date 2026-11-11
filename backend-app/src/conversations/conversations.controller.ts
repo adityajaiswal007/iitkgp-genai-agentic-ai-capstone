@@ -14,10 +14,17 @@ import {
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiConsumes,
+  ApiHeader,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { MAX_FILE_BYTES, MAX_FILES } from '../attachments/validate-uploads.js';
-import { Throttle } from '@nestjs/throttler';
+import { ChatRateLimit } from '../rate-limit/rate-limit.module.js';
 import { ConversationsService } from './conversations.service.js';
 import {
   CreateConversationDto,
@@ -28,6 +35,17 @@ import {
 } from './dto/chat.dto.js';
 
 @ApiTags('conversations')
+@ApiHeader({
+  name: 'X-Client-ID',
+  required: true,
+  description: 'Persistent browser UUID v4',
+  schema: { type: 'string', format: 'uuid' },
+})
+@ApiResponse({
+  status: 429,
+  description:
+    'Browser quota exceeded. Retry-After specifies the cooldown in seconds.',
+})
 @Controller('conversations')
 export class ConversationsController {
   constructor(private readonly conversations: ConversationsService) {}
@@ -120,7 +138,7 @@ export class ConversationsController {
       },
     }),
   )
-  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @ChatRateLimit()
   @ApiOperation({
     summary:
       'Execute an agent query and atomically store the user and assistant messages',

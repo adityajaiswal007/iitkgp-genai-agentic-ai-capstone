@@ -24,7 +24,9 @@ test.beforeEach(async ({ page }, testInfo) => {
 });
 test.afterEach(async ({ request }, testInfo) => {
   for (const id of created.get(testInfo.testId) ?? [])
-    await request.delete(`${backendUrl}/conversations/${id}`);
+    await request.delete(`${backendUrl}/conversations/${id}`, {
+      headers: { "X-Client-ID": randomUUID() },
+    });
   created.delete(testInfo.testId);
 });
 
@@ -62,7 +64,7 @@ test("select, remove, send, reload and download an attachment", async ({
     animations: "disabled",
   });
   await page.getByRole("button", { name: "Send message", exact: true }).click();
-  const link = page.getByRole("link", { name: "Download operations.csv" });
+  const link = page.getByRole("button", { name: "Download operations.csv" });
   await expect(link).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop response" })).toHaveCount(
     0,
@@ -75,10 +77,35 @@ test("select, remove, send, reload and download an attachment", async ({
   await page.getByRole("button", { name: title, exact: true }).click();
   await expect(link).toBeVisible();
   const downloadEvent = page.waitForEvent("download");
+  const downloadRequest = page.waitForRequest((request) =>
+    request.url().includes("/attachments/"),
+  );
   await link.click();
+  expect((await downloadRequest).headers()["x-client-id"]).toBe(
+    await page.evaluate(() =>
+      localStorage.getItem("operations_copilot_client_id"),
+    ),
+  );
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe(csv.name);
   expect(await readFile((await download.path())!)).toEqual(csv.buffer);
+  await page.route("**/attachments/*", (route) =>
+    route.fulfill({
+      status: 429,
+      headers: { "access-control-allow-origin": "*" },
+      json: {
+        error: {
+          code: "RATE_LIMITED",
+          message: "Too many requests. Please try again in 12 seconds.",
+          retryAfterSeconds: 12,
+        },
+      },
+    }),
+  );
+  await link.click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Too many requests." }),
+  ).toHaveText("Too many requests. Please try again in 12 seconds.");
 });
 
 test("sends a file without text and fits the mobile composer", async ({
@@ -91,7 +118,7 @@ test("sends a file without text and fits the mobile composer", async ({
   ).toBeEnabled();
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(
-    page.getByRole("link", { name: "Download operations.csv" }),
+    page.getByRole("button", { name: "Download operations.csv" }),
   ).toBeVisible();
   await expect(page.getByLabel("Your message")).toContainText("Attached files");
   expect(

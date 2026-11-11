@@ -4,7 +4,7 @@ A ChatGPT-style workspace built with Next.js 16, React 19, TypeScript, Tailwind 
 
 ## Run locally
 
-Start the PostgreSQL database and NestJS backend in `../backend-app` first; see that project's README. Then use Node.js 24 (specified in `.nvmrc`):
+Start PostgreSQL, Redis, and the NestJS backend in `../backend-app` first; see that project's README. Then use Node.js 24 (specified in `.nvmrc`):
 
 ```bash
 nvm install
@@ -33,9 +33,17 @@ The UI stops waiting when you cancel. A request already accepted by the server m
 
 Hosted inference keys stay in the backend environment. Never put secrets in `NEXT_PUBLIC_*` variables.
 
+## Browser identity and rate limits
+
+On the first API request during page load, `src/lib/client-identity.ts` generates a UUID v4 with `crypto.randomUUID()` and stores it as `operations_copilot_client_id` in localStorage. Every API request sends it as `X-Client-ID`, including multipart uploads and attachment downloads. Reloads and tabs on the same origin reuse the ID. Browser storage must be available; an explicit notice appears if storage is blocked. The ID is a quota identifier, not a login token, and does not control access to conversations.
+
+Redis on the backend stores shared usage across API instances. Default limits are 120 API attempts and 20 chat submissions per 60 seconds, with a 60-second cooldown after exceeding a limit. Configure these in the backend `.env` and `src/config/rate-limit.config.ts`, then restart/recreate the backend. The frontend displays the server's 429 message with the remaining wait time and does not automatically retry. Failed sends retain the draft and selected attachments. Downloads use a header-bearing fetch followed by a browser blob download, and display rate-limit errors inline.
+
+Clearing browser storage, switching browser/origin, or replacing the UUID creates a new quota. Account-level enforcement requires authentication. UUID generation requires HTTPS or a trusted localhost origin.
+
 ## Checks
 
-Keep the backend and PostgreSQL running while testing:
+Keep the backend, PostgreSQL, and Redis running while testing:
 
 ```bash
 npm run lint
@@ -52,7 +60,7 @@ Typing-effect tests can run with controlled API responses while the backend is s
 
 ## Docker
 
-With Docker Desktop running, start the frontend, NestJS API, and PostgreSQL together from this folder:
+With Docker Desktop running, start the frontend, NestJS API, PostgreSQL, and Redis together from this folder:
 
 ```bash
 docker compose --profile app up -d --build --wait
@@ -60,9 +68,9 @@ docker compose --profile app up -d --build --wait
 
 Open http://localhost:3000. The API documentation is available at http://localhost:3001/api/docs. The command builds both application images, starts PostgreSQL, runs database migrations, and waits for health checks. The frontend starts after the API is healthy.
 
-`compose.yaml` includes `../backend/compose.yaml` and reads the existing `../backend/.env`. It uses the same `operations-copilot` project name and PostgreSQL volume as backend-only startup, preserving existing chats and attachments. Keep the frontend and backend folders beside each other. Docker Compose 2.20.3 or newer is required for includes.
+`compose.yaml` includes `../backend-app/compose.yaml` and reads the existing `../backend-app/.env`. It uses the same `operations-copilot` project name and PostgreSQL/Redis volumes as backend-only startup, preserving existing chats, attachments, and quota state. Keep the frontend and backend folders beside each other. Docker Compose 2.20.3 or newer is required for includes.
 
-Inspect the stack with `docker compose --profile app ps`. Stop all three services with `docker compose --profile app stop`; the database volume is preserved. To view frontend logs, run `docker compose --profile app logs -f frontend`.
+Inspect the stack with `docker compose --profile app ps`. Stop all four services with `docker compose --profile app stop`; volumes are preserved. To view frontend logs, run `docker compose --profile app logs -f frontend`.
 
 The frontend defaults to the browser-accessible API at `http://127.0.0.1:3001/api`. For another API URL, run `NEXT_PUBLIC_API_URL=https://your-api.example/api docker compose --profile app up -d --build --wait`. Next.js embeds this public URL at build time. The image uses standalone output and runs as the unprivileged `node` user. All published ports bind to loopback for local use.
 

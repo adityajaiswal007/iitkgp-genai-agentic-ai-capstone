@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 const backendUrl =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3001/api";
 let createdIds: string[] = [];
@@ -16,7 +17,9 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ request }) => {
   for (const id of createdIds)
-    await request.delete(`${backendUrl}/conversations/${id}`);
+    await request.delete(`${backendUrl}/conversations/${id}`, {
+      headers: { "X-Client-ID": randomUUID() },
+    });
 });
 
 test("send, reload, switch, and delete a conversation", async ({ page }) => {
@@ -34,12 +37,16 @@ test("send, reload, switch, and delete a conversation", async ({ page }) => {
     .getByRole("textbox", { name: "Message Operations Copilot" })
     .fill("Help me plan a vendor review");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await expect(page.getByText("Assistant response", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Assistant response", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message Operations Copilot" }),
   ).toBeFocused();
   await page.reload();
-  await expect(page.getByText("Assistant response", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Assistant response", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "New chat", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "What are we working on?" }),
@@ -47,7 +54,9 @@ test("send, reload, switch, and delete a conversation", async ({ page }) => {
   await page
     .getByRole("button", { name: "Help me plan a vendor review", exact: true })
     .click();
-  await expect(page.getByText("Assistant response", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Assistant response", { exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Delete Help me plan a vendor review" })
     .click();
@@ -73,7 +82,9 @@ test("mobile navigation and keyboard composition work", async ({ page }) => {
   await input.press("Shift+Enter");
   await expect(input).toHaveValue("Summarize a document\n");
   await input.press("Enter");
-  await expect(page.getByText("Assistant response", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Assistant response", { exact: true }),
+  ).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

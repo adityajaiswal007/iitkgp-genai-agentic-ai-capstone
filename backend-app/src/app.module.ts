@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { RateLimitModule } from './rate-limit/rate-limit.module.js';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { validateEnvironment } from './config/environment.js';
 import { databaseOptions } from './database/data-source.js';
@@ -17,12 +16,9 @@ import { AppController } from './app.controller.js';
         retryDelay: 1000,
       }),
     }),
-    ThrottlerModule.forRoot({
-      throttlers: [{ name: 'default', ttl: 60000, limit: 120 }],
-    }),
+    RateLimitModule,
     ConversationsModule,
   ],
   controllers: [AppController],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

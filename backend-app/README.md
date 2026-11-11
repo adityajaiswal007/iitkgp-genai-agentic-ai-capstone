@@ -1,6 +1,6 @@
 # Operations Copilot backend
 
-NestJS 12 / TypeScript orchestrator API with PostgreSQL 17, TypeORM migrations, Swagger, request validation, and a separate orchestration module. The Next.js frontend in `../frontend-app` now saves and retrieves conversations through this API.
+NestJS 12 / TypeScript orchestrator API with PostgreSQL 17, Redis-backed browser rate limits, TypeORM migrations, Swagger, request validation, and a separate orchestration module. The Next.js frontend in `../frontend-app` now saves and retrieves conversations through this API.
 
 ## Start everything in Docker
 
@@ -22,8 +22,10 @@ On the configured development machine, `.env` has already been created with a ge
 - Readiness check: http://127.0.0.1:3001/api/health
 - PostgreSQL from the host: `127.0.0.1:5433`
 - PostgreSQL from the API container: `db:5432`
+- Rate-limit Redis from the host: `127.0.0.1:6380` (configurable with `REDIS_PORT`)
+- Rate-limit Redis from the API container: `redis:6379`
 
-The API container runs migrations before starting. Both services have health checks. The API runs as the unprivileged `node` user; host-facing ports bind to loopback. Database data lives in the `operations-copilot_postgres_data` Docker volume. Container restarts/recreation and `docker compose down` preserve it. `docker compose down -v` deletes the data volume.
+The API container runs migrations before starting. PostgreSQL, Redis, and the API have health checks. The API runs as the unprivileged `node` user; host-facing ports bind to loopback. Database data lives in `operations-copilot_postgres_data`; rate-limit state lives in `operations-copilot_rate_limit_redis_data`. Redis uses AOF persistence with one-second fsync and no eviction. API restarts retain quotas; an abrupt Redis crash can lose approximately the last second of writes. Container recreation and `docker compose down` preserve volumes. `docker compose down -v` deletes them.
 
 On this Mac, Docker runs in a Colima profile named `capstone`:
 
@@ -36,7 +38,7 @@ The existing macOS-trusted corporate network CA was also added to this VM so Doc
 
 ## Develop the API on the host
 
-Use Node.js 24. Keep the database in Docker. Stop the API container first if it is using port 3001.
+Use Node.js 24. Keep PostgreSQL and Redis in Docker. Stop the API container first if it is using port 3001. `npm run db:up` starts both dependencies.
 
 ```bash
 nvm install
@@ -62,7 +64,7 @@ All routes below are under `/api`.
 | DELETE | `/conversations/:id` | Delete conversation and messages; returns 204 even when already deleted |
 | GET | `/conversations/:id/messages` | Paginated messages, ordered by sequence ascending |
 | POST | `/conversations/:id/messages` | Generate and atomically persist one user/assistant turn |
-| GET | `/health` | PostgreSQL readiness and current orchestrator mode |
+| GET | `/health` | PostgreSQL and Redis readiness and current orchestrator mode |
 
 Conversation metadata:
 
@@ -124,7 +126,52 @@ See `.env.example`. To use another PostgreSQL server, set `DB_HOST`, `DB_PORT`, 
 
 This is a local, shared, single-workspace starter. Authentication, per-user ownership, PII redaction, and production access control are not implemented. Add these before making the API publicly accessible. CORS is not authentication. Demo replies do not execute consequential actions.
 
-Rate limits apply per IP and route, in this API process: 120 requests/minute by default, 20 message-generation requests/minute. Health checks are exempt. Limits reset when the process restarts; a scaled deployment needs shared limiter storage. There is no model-response cache yet; saved conversation history and request deduplication are database features.
+There is no model-response cache yet; saved conversation history and request deduplication are database features.
+
+## Browser rate limiting
+
+Every conversation request, including uploads and downloads, requires `X-Client-ID` containing a UUID v4. The frontend generates it once and saves it as `operations_copilot_client_id` in localStorage. Reloads and tabs on the same origin reuse it. Missing or malformed IDs return 400. UUIDs are normalized to lowercase. Health checks, CORS preflight, and Swagger documentation do not consume quota or require the header.
+
+Defaults are centralized in [`src/config/rate-limit.config.ts`](src/config/rate-limit.config.ts). Override them in `.env`; invalid configuration prevents startup:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `RATE_LIMIT_API_COUNT` | `120` | Attempts across all controller API routes per browser per window |
+| `RATE_LIMIT_API_WINDOW_SECONDS` | `60` | General API window |
+| `RATE_LIMIT_CHAT_COUNT` | `20` | Message submissions across all conversations per browser per window |
+| `RATE_LIMIT_CHAT_WINDOW_SECONDS` | `60` | Message-generation window |
+| `RATE_LIMIT_BLOCK_SECONDS` | `60` | Cooldown starting when a request exceeds a quota |
+| `REDIS_URL` | `redis://127.0.0.1:6380` | Host-development Redis; Compose overrides to `redis://redis:6379` |
+| `RATE_LIMIT_KEY_PREFIX` | `operations-copilot:rate-limit:v1` | Shared namespace for API replicas |
+
+Counts and durations must be positive integers; durations are capped at 24 hours. Restart a host API after editing `.env`. For Docker, rerun `docker compose --profile app up -d --build --wait`. All replicas must use the same Redis, prefix, and policy settings. Changing `REDIS_PORT` also requires updating the host-development `REDIS_URL`.
+
+The guard checks Redis before controller execution, attachment processing, database operations, or agent calls. Each policy uses a first-request fixed window and a Redis hash keyed as `<prefix>:<browser-uuid>:api` or `<prefix>:<browser-uuid>:chat`, holding `count`, `resetAt`, and `blockedUntil`. A Lua script uses Redis time to read, increment, block, and set expiry atomically. Concurrent API replicas share quotas. PostgreSQL is not queried for quota tracking.
+
+Exactly the configured number of attempts is allowed; the next attempt returns 429. Requests that later fail validation still count. Chat attempts also consume general API quota, including attempts while the chat policy is blocked. A chat-only block leaves other routes available unless the general quota is exhausted. Blocked requests never extend that policy's cooldown. A new window starts after cooldown expiry; ordinary expired windows also reset automatically. Unused entries expire in Redis.
+
+Blocked responses include a standard `Retry-After` header and:
+
+```json
+{
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Too many requests. Please try again in 60 seconds.",
+    "retryAfterSeconds": 60
+  }
+}
+```
+
+The actual retry value reflects the remaining cooldown. Allowed responses include `X-RateLimit-Limit-api`, `X-RateLimit-Remaining-api`, and `X-RateLimit-Reset-api` (seconds until reset), plus corresponding `-chat` headers on message submissions. CORS exposes these headers and `Retry-After`. Redis outages reject protected requests with 503, without an in-memory fallback. Readiness also checks Redis.
+
+For curl or Postman, generate a UUID once and reuse it:
+
+```bash
+CLIENT_ID="$(uuidgen)"
+curl -H "X-Client-ID: $CLIENT_ID" http://127.0.0.1:3001/api/conversations
+```
+
+This controls browser usage; it does not authenticate users. Clearing localStorage, using another browser/origin, or supplying a new UUID creates a new quota. Use verified authenticated user IDs for enforceable account quotas. Redis binds to loopback for local development. For remote Redis, supply credentials and `rediss://` TLS in `REDIS_URL`; keep credentials out of logs and version control.
 
 ## Checks
 
@@ -145,7 +192,7 @@ Integration tests use a distinct `TEST_DB_NAME` (default `operations_copilot_tes
 - `src/database/`: Entities, data source, and migrations.
 - `src/config/`: Startup configuration validation.
 - `src/common/`: Consistent API error handling.
-- `compose.yaml`: Persistent PostgreSQL plus optional API container.
+- `compose.yaml`: Persistent PostgreSQL and Redis plus optional API container.
 
 ## References
 

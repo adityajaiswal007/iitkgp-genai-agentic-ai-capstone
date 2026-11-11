@@ -13,6 +13,16 @@ export function configureApp(app: INestApplication) {
   app.enableCors({
     origin: config.get<string[]>('FRONTEND_ORIGINS'),
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-Client-ID'],
+    exposedHeaders: [
+      'Retry-After',
+      'X-RateLimit-Limit-api',
+      'X-RateLimit-Remaining-api',
+      'X-RateLimit-Reset-api',
+      'X-RateLimit-Limit-chat',
+      'X-RateLimit-Remaining-chat',
+      'X-RateLimit-Reset-chat',
+    ],
   });
   app.useGlobalPipes(
     new ValidationPipe({

@@ -29,7 +29,7 @@ async function mockChatApi(page: Page, failReply = false) {
         status: 204,
         headers: {
           "access-control-allow-origin": "*",
-          "access-control-allow-headers": "content-type",
+          "access-control-allow-headers": "content-type,x-client-id",
           "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
         },
       });

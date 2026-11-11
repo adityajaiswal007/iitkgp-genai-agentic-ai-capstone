@@ -56,6 +56,12 @@ export class ApiExceptionFilter implements ExceptionFilter {
         code: codes[status] ?? 'INTERNAL_ERROR',
         message,
         ...(Array.isArray(details) ? { details } : {}),
+        ...(status === 429 &&
+        body &&
+        typeof body === 'object' &&
+        'retryAfterSeconds' in body
+          ? { retryAfterSeconds: body.retryAfterSeconds }
+          : {}),
       },
     });
   }

@@ -13,6 +13,13 @@ const agentRequests: {
   history: { role: string; content: string }[];
 }[] = [];
 const ids: string[] = [];
+let clientId = randomUUID();
+beforeEach(() => {
+  clientId = randomUUID();
+});
+function api() {
+  return request.agent(app.getHttpServer()).set('X-Client-ID', clientId);
+}
 async function startApp() {
   const { AppModule } = await import('../dist/app.module.js');
   const { configureApp } = await import('../dist/configure-app.js');
@@ -53,12 +60,11 @@ beforeAll(async () => {
 afterAll(async () => {
   if (agent) await new Promise<void>((resolve) => agent.close(() => resolve()));
   if (!app) return;
-  for (const id of ids)
-    await request(app.getHttpServer()).delete(`/api/conversations/${id}`);
+  for (const id of ids) await api().delete(`/api/conversations/${id}`);
   await app.close();
 });
 async function create(title = `Integration ${randomUUID()}`) {
-  const response = await request(app.getHttpServer())
+  const response = await api()
     .post('/api/conversations')
     .send({ title })
     .expect(201);
@@ -67,11 +73,11 @@ async function create(title = `Integration ${randomUUID()}`) {
 }
 
 it('checks PostgreSQL readiness and exposes API documentation', async () => {
-  await request(app.getHttpServer())
+  await api()
     .get('/api/health')
     .expect(200)
     .expect(({ body }) => expect(body.database).toBe('up'));
-  await request(app.getHttpServer())
+  await api()
     .get('/api/docs-json')
     .expect(200)
     .expect(({ body }) =>
@@ -81,7 +87,7 @@ it('checks PostgreSQL readiness and exposes API documentation', async () => {
 it('creates, searches, paginates, and renames conversations', async () => {
   const title = `Search ${randomUUID()}`;
   const conversation = await create(title);
-  const list = await request(app.getHttpServer())
+  const list = await api()
     .get('/api/conversations')
     .query({ search: title, pageSize: 1 })
     .expect(200);
@@ -89,7 +95,7 @@ it('creates, searches, paginates, and renames conversations', async () => {
     conversation.id,
   ]);
   expect(list.body.pagination.totalItems).toBe(1);
-  const renamed = await request(app.getHttpServer())
+  const renamed = await api()
     .patch(`/api/conversations/${conversation.id}`)
     .send({ title: '  Renamed  ' })
     .expect(200);
@@ -104,30 +110,24 @@ it('stores ordered turns, handles retries, and rejects conflicting or forged inp
     requestId: randomUUID(),
     expectedVersion: 0,
   };
-  const first = await request(app.getHttpServer())
-    .post(url)
-    .send(input)
-    .expect(201);
+  const first = await api().post(url).send(input).expect(201);
   expect(
     first.body.messages.map((item: { role: string }) => item.role),
   ).toEqual(['user', 'assistant']);
   expect(first.body.mode).toBe('agent');
-  const retry = await request(app.getHttpServer())
-    .post(url)
-    .send(input)
-    .expect(201);
+  const retry = await api().post(url).send(input).expect(201);
   expect(retry.body.messages.map((item: { id: string }) => item.id)).toEqual(
     first.body.messages.map((item: { id: string }) => item.id),
   );
-  await request(app.getHttpServer())
+  await api()
     .post(url)
     .send({ ...input, content: 'Changed content' })
     .expect(409);
-  await request(app.getHttpServer())
+  await api()
     .post(url)
     .send({ ...input, requestId: randomUUID() })
     .expect(409);
-  await request(app.getHttpServer())
+  await api()
     .post(url)
     .send({
       ...input,
@@ -136,17 +136,14 @@ it('stores ordered turns, handles retries, and rejects conflicting or forged inp
       role: 'assistant',
     })
     .expect(400);
-  const list = await request(app.getHttpServer())
-    .get(url)
-    .query({ pageSize: 1, page: 2 })
-    .expect(200);
+  const list = await api().get(url).query({ pageSize: 1, page: 2 }).expect(200);
   expect(list.body.pagination.totalItems).toBe(2);
   expect(list.body.data[0].role).toBe('assistant');
 });
 it('forwards both saved roles on a follow-up in the same conversation', async () => {
   const chat = await create();
   const url = `/api/conversations/${chat.id}/messages`;
-  await request(app.getHttpServer())
+  await api()
     .post(url)
     .send({
       content: 'Regional leadership assignments',
@@ -154,7 +151,7 @@ it('forwards both saved roles on a follow-up in the same conversation', async ()
       requestId: randomUUID(),
     })
     .expect(201);
-  await request(app.getHttpServer())
+  await api()
     .post(url)
     .send({
       content: 'share their email',
@@ -175,7 +172,7 @@ it('allows only one writer for a shared conversation version', async () => {
   const url = `/api/conversations/${conversation.id}/messages`;
   const results = await Promise.all(
     ['First', 'Second'].map((content) =>
-      request(app.getHttpServer())
+      api()
         .post(url)
         .send({ content, requestId: randomUUID(), expectedVersion: 0 }),
     ),
@@ -183,12 +180,12 @@ it('allows only one writer for a shared conversation version', async () => {
   expect(results.map((result) => result.status).sort((a, b) => a - b)).toEqual([
     201, 409,
   ]);
-  const messages = await request(app.getHttpServer()).get(url).expect(200);
+  const messages = await api().get(url).expect(200);
   expect(messages.body.pagination.totalItems).toBe(2);
 });
 it('persists across application restart and cascades deletion to messages', async () => {
   const conversation = await create();
-  await request(app.getHttpServer())
+  await api()
     .post(`/api/conversations/${conversation.id}/messages`)
     .send({
       content: 'Persistent message',
@@ -198,16 +195,12 @@ it('persists across application restart and cascades deletion to messages', asyn
     .expect(201);
   await app.close();
   app = await startApp();
-  const saved = await request(app.getHttpServer())
+  const saved = await api()
     .get(`/api/conversations/${conversation.id}/messages`)
     .expect(200);
   expect(saved.body.data[0].content).toBe('Persistent message');
-  await request(app.getHttpServer())
-    .delete(`/api/conversations/${conversation.id}`)
-    .expect(204);
-  await request(app.getHttpServer())
-    .get(`/api/conversations/${conversation.id}`)
-    .expect(404);
+  await api().delete(`/api/conversations/${conversation.id}`).expect(204);
+  await api().get(`/api/conversations/${conversation.id}`).expect(404);
   expect(
     await app
       .get(DataSource)
@@ -215,26 +208,14 @@ it('persists across application restart and cascades deletion to messages', asyn
         conversation.id,
       ]),
   ).toEqual([]);
-  await request(app.getHttpServer())
-    .delete(`/api/conversations/${conversation.id}`)
-    .expect(204);
+  await api().delete(`/api/conversations/${conversation.id}`).expect(204);
 });
 it('validates IDs, bodies, and pagination without leaking internal errors', async () => {
-  await request(app.getHttpServer())
-    .get('/api/conversations/not-a-uuid')
-    .expect(400);
-  await request(app.getHttpServer())
-    .post('/api/conversations')
-    .send({ title: null })
-    .expect(400);
-  await request(app.getHttpServer())
-    .post('/api/conversations')
-    .send({ title: ' ' })
-    .expect(400);
-  await request(app.getHttpServer())
-    .get('/api/conversations?pageSize=101')
-    .expect(400);
-  const missing = await request(app.getHttpServer())
+  await api().get('/api/conversations/not-a-uuid').expect(400);
+  await api().post('/api/conversations').send({ title: null }).expect(400);
+  await api().post('/api/conversations').send({ title: ' ' }).expect(400);
+  await api().get('/api/conversations?pageSize=101').expect(400);
+  const missing = await api()
     .get(`/api/conversations/${randomUUID()}`)
     .expect(404);
   expect(missing.body.error.code).toBe('NOT_FOUND');
@@ -242,12 +223,12 @@ it('validates IDs, bodies, and pagination without leaking internal errors', asyn
 });
 
 it('rejects malformed JSON and oversized request bodies', async () => {
-  await request(app.getHttpServer())
+  await api()
     .post('/api/conversations')
     .set('Content-Type', 'application/json')
     .send('{bad')
     .expect(400);
-  await request(app.getHttpServer())
+  await api()
     .post('/api/conversations')
     .send({ title: 'a'.repeat(70000) })
     .expect(413);
@@ -256,7 +237,7 @@ it('limits message-generation requests', async () => {
   const url = `/api/conversations/${randomUUID()}/messages`;
   const statuses: number[] = [];
   for (let i = 0; i < 21; i++) {
-    const response = await request(app.getHttpServer()).post(url).send({
+    const response = await api().post(url).send({
       content: 'Rate-limit test',
       requestId: randomUUID(),
       expectedVersion: 0,
@@ -278,7 +259,7 @@ describe('attachments', () => {
 
   it('stores multipart files, returns metadata, and downloads the original bytes', async () => {
     const conversation = await create();
-    const sent = await request(app.getHttpServer())
+    const sent = await api()
       .post(`/api/conversations/${conversation.id}/messages`)
       .field('content', 'Review the attachments')
       .field('requestId', randomUUID())
@@ -301,18 +282,18 @@ describe('attachments', () => {
     expect(files[0].data).toBeUndefined();
     expect(files[0].sha256).toBeUndefined();
     expect(sent.body.messages[1].content).toContain('not read or analysed');
-    const saved = await request(app.getHttpServer())
+    const saved = await api()
       .get(`/api/conversations/${conversation.id}/messages`)
       .expect(200);
     expect(saved.body.data[0].attachments[0].id).toBe(files[0].id);
-    const download = await request(app.getHttpServer())
+    const download = await api()
       .get(`/api/conversations/${conversation.id}/attachments/${files[0].id}`)
       .expect(200)
       .expect('Content-Type', /application\/octet-stream/);
     expect(download.body).toEqual(csv);
     expect(download.headers['content-disposition']).toContain('report%27s.csv');
     const other = await create();
-    await request(app.getHttpServer())
+    await api()
       .get(`/api/conversations/${other.id}/attachments/${files[0].id}`)
       .expect(404);
   });
@@ -321,7 +302,7 @@ describe('attachments', () => {
     const conversation = await create();
     const requestId = randomUUID();
     const send = (bytes = csv, name = 'report.csv') =>
-      request(app.getHttpServer())
+      api()
         .post(`/api/conversations/${conversation.id}/messages`)
         .field('content', 'Review')
         .field('requestId', requestId)
@@ -344,7 +325,7 @@ describe('attachments', () => {
 
   it('accepts an attachment-only message', async () => {
     const conversation = await create();
-    const result = await request(app.getHttpServer())
+    const result = await api()
       .post(`/api/conversations/${conversation.id}/messages`)
       .field('content', '')
       .field('requestId', randomUUID())
@@ -358,7 +339,7 @@ describe('attachments', () => {
   it('rejects invalid file content, excessive counts, and oversized files without saving messages', async () => {
     const conversation = await create();
     const send = () =>
-      request(app.getHttpServer())
+      api()
         .post(`/api/conversations/${conversation.id}/messages`)
         .field('content', 'Check')
         .field('requestId', randomUUID())
@@ -386,7 +367,7 @@ describe('attachments', () => {
     for (let index = 0; index < 6; index++)
       excessive.attach('files', csv, { filename: `report-${index}.csv` });
     await excessive.expect(400);
-    const result = await request(app.getHttpServer())
+    const result = await api()
       .get(`/api/conversations/${conversation.id}/messages`)
       .expect(200);
     expect(result.body.pagination.totalItems).toBe(0);
@@ -394,7 +375,7 @@ describe('attachments', () => {
 
   it('preserves files across application restart and deletes them with the conversation', async () => {
     const conversation = await create();
-    const sent = await request(app.getHttpServer())
+    const sent = await api()
       .post(`/api/conversations/${conversation.id}/messages`)
       .field('content', 'Persist this file')
       .field('requestId', randomUUID())
@@ -404,19 +385,17 @@ describe('attachments', () => {
     const fileId = sent.body.messages[0].attachments[0].id;
     await app.close();
     app = await startApp();
-    const downloaded = await request(app.getHttpServer())
+    const downloaded = await api()
       .get(`/api/conversations/${conversation.id}/attachments/${fileId}`)
       .expect(200);
     expect(downloaded.body).toEqual(csv);
-    await request(app.getHttpServer())
-      .delete(`/api/conversations/${conversation.id}`)
-      .expect(204);
+    await api().delete(`/api/conversations/${conversation.id}`).expect(204);
     expect(
       await app
         .get(DataSource)
         .query('SELECT id FROM attachments WHERE id = $1', [fileId]),
     ).toEqual([]);
-    await request(app.getHttpServer())
+    await api()
       .get(`/api/conversations/${conversation.id}/attachments/${fileId}`)
       .expect(404);
   });

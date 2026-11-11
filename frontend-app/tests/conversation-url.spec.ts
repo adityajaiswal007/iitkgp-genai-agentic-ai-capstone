@@ -58,7 +58,7 @@ async function mockChats(
     const chat = chats.find((item) => item.id === id);
     const headers = {
       "access-control-allow-origin": "*",
-      "access-control-allow-headers": "content-type",
+      "access-control-allow-headers": "content-type,x-client-id",
       "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
     };
     if (method === "OPTIONS") return route.fulfill({ status: 204, headers });

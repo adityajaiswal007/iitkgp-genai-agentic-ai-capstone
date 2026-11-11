@@ -5,6 +5,7 @@ import type {
   Message,
   Page,
 } from "./chat";
+import { browserClientId } from "./client-identity";
 
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3001/api"
@@ -14,6 +15,7 @@ export class ChatApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
   }
@@ -46,12 +48,6 @@ function attachment(value: unknown): Attachment {
   )
     throw new Error("Invalid attachment response.");
   return item as Attachment;
-}
-export function attachmentDownloadUrl(
-  conversationId: string,
-  attachmentId: string,
-) {
-  return `${API_URL}/conversations/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachmentId)}`;
 }
 function message(value: unknown): Message {
   const item = object(value);
@@ -88,36 +84,65 @@ function page<T>(value: unknown, parse: (item: unknown) => T): Page<T> {
     pagination: pagination as Page<T>["pagination"],
   };
 }
-async function request<T>(
+async function fetchResponse(
   path: string,
-  parse: (value: unknown) => T,
   options: RequestInit = {},
-): Promise<T> {
+): Promise<Response> {
+  const headers = new Headers(options.headers);
+  headers.set("X-Client-ID", await browserClientId());
+  if (options.body && !(options.body instanceof FormData))
+    headers.set("Content-Type", "application/json");
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...options,
       cache: "no-store",
-      headers:
-        options.body && !(options.body instanceof FormData)
-          ? { "Content-Type": "application/json" }
-          : undefined,
+      headers,
     });
   } catch (error) {
     if (options.signal?.aborted) throw error;
     throw new Error(
-      "Cannot reach the chat server. Check that the backend and PostgreSQL are running.",
+      "Cannot reach the chat server. Check that the backend, PostgreSQL, and Redis are running.",
     );
   }
-  const body: unknown = response.status === 204 ? null : await response.json();
   if (!response.ok) {
+    const body: unknown = await response.json();
     const error = object(object(body).error);
     throw new ChatApiError(
       typeof error.message === "string" ? error.message : "The request failed.",
       response.status,
+      typeof error.retryAfterSeconds === "number" &&
+        Number.isFinite(error.retryAfterSeconds)
+        ? error.retryAfterSeconds
+        : undefined,
     );
   }
+  return response;
+}
+async function request<T>(
+  path: string,
+  parse: (value: unknown) => T,
+  options: RequestInit = {},
+): Promise<T> {
+  const response = await fetchResponse(path, options);
+  const body: unknown = response.status === 204 ? null : await response.json();
   return parse(body);
+}
+
+export async function downloadAttachment(
+  conversationId: string,
+  attachment: Attachment,
+) {
+  const path = `/conversations/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachment.id)}`;
+  const response = await fetchResponse(path);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = attachment.name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export const chatApi = {
   list: (pageNumber = 1, search = "", signal?: AbortSignal) =>

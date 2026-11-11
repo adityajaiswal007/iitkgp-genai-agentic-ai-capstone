@@ -2,9 +2,9 @@
 
 import { Check, Copy, Download, FileText, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { attachmentDownloadUrl } from "@/lib/chat-client";
+import { downloadAttachment } from "@/lib/chat-client";
 import { fileSize } from "@/lib/attachments";
-import type { Message } from "@/lib/chat";
+import type { Attachment, Message } from "@/lib/chat";
 
 function AssistantMessage({
   message,
@@ -78,6 +78,23 @@ export function MessageList({
   waiting: boolean;
   streamingMessageId: string | null;
 }) {
+  const [downloadError, setDownloadError] = useState("");
+  const [downloading, setDownloading] = useState<string | null>(null);
+  async function download(attachment: Attachment) {
+    setDownloadError("");
+    setDownloading(attachment.id);
+    try {
+      await downloadAttachment(conversationId, attachment);
+    } catch (error) {
+      setDownloadError(
+        error instanceof Error
+          ? error.message
+          : "Could not download this attachment.",
+      );
+    } finally {
+      setDownloading(null);
+    }
+  }
   const end = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const lastMessageId = messages.at(-1)?.id;
@@ -128,18 +145,16 @@ export function MessageList({
                     </>
                   );
                   return attachment.id ? (
-                    <a
+                    <button
                       className="attachment-chip"
-                      href={attachmentDownloadUrl(
-                        conversationId,
-                        attachment.id,
-                      )}
-                      download={attachment.name}
+                      type="button"
+                      onClick={() => void download(attachment)}
+                      disabled={downloading !== null}
                       aria-label={`Download ${attachment.name}`}
                       key={attachment.id}
                     >
                       {body}
-                    </a>
+                    </button>
                   ) : (
                     <div className="attachment-chip" key={index}>
                       {body}
@@ -156,6 +171,11 @@ export function MessageList({
             key={message.id}
           />
         ),
+      )}
+      {downloadError && (
+        <p className="inline-notice" role="alert">
+          {downloadError}
+        </p>
       )}
       {waiting && (
         <div

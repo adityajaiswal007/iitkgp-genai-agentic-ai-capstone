@@ -1019,7 +1019,7 @@ dialog::backdrop {
   width: 22px;
   height: 24px;
 }
-a.attachment-chip:hover {
+button.attachment-chip:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
