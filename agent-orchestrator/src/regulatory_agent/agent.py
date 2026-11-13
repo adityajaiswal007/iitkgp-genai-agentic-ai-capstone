@@ -12,6 +12,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from .contracts import (Limits, AgentState, ControlledStop, RetryableModelError,
                         PermanentModelError, parse_json, call_with_timeout, Plan, Draft, Critique, ContextResolution)
 from .tools import TOOL_SCHEMAS, tool_attempt
+from .attachments import AttachmentTools
 from .models import build_messages, history_messages
 
 class RegulatoryAgent:
@@ -107,7 +108,8 @@ class RegulatoryAgent:
         for attempt in range(2):
             self.take_step(s)
             start = time.monotonic()
-            result = tool_attempt(self.tools, name, arguments, self.remaining_seconds(s))
+            tools = AttachmentTools(self.tools, s['attachment_passages'], s['current_attachment_ids']) if s['attachment_passages'] else self.tools
+            result = tool_attempt(tools, name, arguments, self.remaining_seconds(s))
             self.event(s,'tool',name,ok=result.ok,attempt=attempt+1,
                        latency_ms=round((time.monotonic()-start)*1000),
                        code=None if result.ok else result.error.code)
@@ -124,7 +126,7 @@ class RegulatoryAgent:
         return s
 
     def resolve_context(self, s):
-        if not s['messages']:
+        if not s['messages'] or (s['current_attachment_ids'] and not re.search(r'\b(their|them|his|her|these people|those people)\b', s['question'], re.I)):
             s['route'] = 'planner'
             return s
         try:
@@ -143,18 +145,29 @@ class RegulatoryAgent:
         except ControlledStop as exc:
             return self.stop(s, exc)
 
+    @staticmethod
+    def upload_catalog(s):
+        return list({p['document_id']:{'document_id':p['document_id'], 'name':p['title'], 'uploaded_this_turn':p['document_id'] in s['current_attachment_ids']}
+                     for p in s['attachment_passages']}.values())
+
+    def model_question(self, s):
+        current = [file['name'] for file in self.upload_catalog(s) if file['uploaded_this_turn']]
+        return s['resolved_question']+('\nFiles attached to the CURRENT message: '+', '.join(current) if current else '')
+
     def planner(self, s):
         try:
             plan = self.model_json(s,'planner',{
-                'question':s['resolved_question'], 'history':s['history'], 'messages':s['messages'],
+                'question':self.model_question(s), 'history':s['history'], 'messages':s['messages'],
                 'as_of':s['as_of'], 'fiscal_year':s['fiscal_year'],
                 'feedback':s['feedback'], 'previous_plan':s['plan'],
-                'revision':s['revision'],
+                'revision':s['revision'], 'uploaded_files':self.upload_catalog(s),
                 'remaining_attempts':self.limits.max_steps-s['steps']}, Plan)
             if plan.action != 'answer':
                 s.update(plan=plan.model_dump(), status='clarify' if plan.action=='clarify' else 'refused',
                          route='finish', answer={'claims':[], 'limitations':[], 'message':plan.message})
                 return s
+            if plan.authority == 'UPLOAD' and not s['attachment_passages']:
+                raise ControlledStop('INVALID_PLAN', 'This conversation has no uploaded evidence.')
             if not plan.authority or not plan.query.strip():
                 raise ControlledStop('INVALID_PLAN', 'Planner did not identify an authority and search query.')
             if not s['revision']:
@@ -195,7 +208,7 @@ class RegulatoryAgent:
             for name in plan['tools']:
                 if name == 'search_documents':
                     data = self.run_tool(s, name, {'query':plan['query'], 'authority':plan['authority'],
-                                                   'fiscal_year':s['fiscal_year']})
+                                                   'fiscal_year':s['fiscal_year'], 'limit':5 if plan['authority']=='UPLOAD' else 3})
                     ids = [h['document_id'] for h in data['hits']]
                     s['evidence'], s['document_status'] = [], []
                     if not ids:
@@ -223,10 +236,10 @@ class RegulatoryAgent:
             if not s['evidence'] or not any(p['document_id'] in applicable for p in s['evidence']):
                 raise ControlledStop('APPLICABILITY_UNKNOWN', 'No evidence is verified applicable to the supplied date/year.')
             draft = self.model_json(s,'executor',{
-                'question':s['resolved_question'], 'history':s['history'], 'messages':s['messages'],
+                'question':self.model_question(s), 'history':s['history'], 'messages':[] if s['current_attachment_ids'] else s['messages'],
                 'as_of':s['as_of'],'fiscal_year':s['fiscal_year'],
                 'evidence':s['evidence'],'document_status':s['document_status'],
-                'feedback':s['feedback']}, Draft)
+                'feedback':s['feedback'], 'uploaded_files':self.upload_catalog(s)}, Draft)
             s.update(draft=draft.model_dump(), route='critic')
             return s
         except ControlledStop as exc:
@@ -245,16 +258,21 @@ class RegulatoryAgent:
                     issues.append('Unknown citation ID: '+citation)
                 elif evidence[citation]['document_id'] not in applicable:
                     issues.append('Citation is not verified applicable: '+citation)
+        asks_current = re.search(r'\b(newly|just)\s+(attached|uploaded)\b|\b(the|this)\s+attached\s+(file|document|image|pdf|csv)\b', s['question'], re.I)
+        if s['current_attachment_ids'] and asks_current and s['plan'].get('authority')=='UPLOAD' and claims:
+            cited_docs = {evidence[c]['document_id'] for claim in claims for c in claim['citations'] if c in evidence}
+            if not cited_docs.intersection(s['current_attachment_ids']):
+                issues.append('The answer must cite the file(s) attached to this message, not only an older upload.')
         return issues
 
     def critic(self, s):
         try:
             issues = self.citation_issues(s)
             verdict = self.model_json(s,'critic',{
-                'question':s['resolved_question'], 'messages':s['messages'],
+                'question':self.model_question(s), 'messages':[] if s['current_attachment_ids'] else s['messages'],
                 'as_of':s['as_of'],'fiscal_year':s['fiscal_year'],
                 'draft':s['draft'],'evidence':s['evidence'],
-                'document_status':s['document_status'], 'deterministic_issues':issues}, Critique)
+                'document_status':s['document_status'], 'deterministic_issues':issues, 'uploaded_files':self.upload_catalog(s)}, Critique)
             self.event(s,'review','verdict',decision=verdict.decision,
                        deterministic_issue_count=len(issues))
             if verdict.decision=='accept' and not issues:
@@ -287,7 +305,7 @@ class RegulatoryAgent:
         self.event(s,'control','finished',status=s['status'], tokens_charged=s['tokens_charged'])
         return s
 
-    def ask(self, thread_id, question, *, as_of=None, fiscal_year=None, messages=None):
+    def ask(self, thread_id, question, *, as_of=None, fiscal_year=None, messages=None, attachment_passages=None, current_attachment_ids=None, started_at=None):
         if self._closed:
             raise ValueError('Agent is closed.')
         if not isinstance(thread_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',thread_id):
@@ -307,9 +325,11 @@ class RegulatoryAgent:
             resolved_year = fiscal_year or (history[-1].get('fiscal_year') if history else None)
             state = AgentState(
                 question=question.strip(), resolved_question=question.strip(), as_of=resolved_date, fiscal_year=resolved_year,
-                history=history, messages=messages if messages is not None else previous.get('messages', history_messages(history)), plan={}, evidence=[], document_status=[], draft={}, feedback=[],
+                history=history, messages=messages if messages is not None else previous.get('messages', history_messages(history)),
+                attachment_passages=attachment_passages if attachment_passages is not None else previous.get('attachment_passages', []),
+                current_attachment_ids=current_attachment_ids or [], plan={}, evidence=[], document_status=[], draft={}, feedback=[],
                 answer={}, status='running', revision=0, steps=0, tokens_charged=0,
-                trace=[], seen_actions=[], started_at=time.time(), route='planner')
+                trace=[], seen_actions=[], started_at=started_at if started_at is not None else time.time(), route='planner')
             return self.graph.invoke(state, config)
 
 

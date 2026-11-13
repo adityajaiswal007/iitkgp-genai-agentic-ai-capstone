@@ -1,7 +1,16 @@
 FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    OMP_THREAD_LIMIT=1
+# Optional corporate-network CA is supplied as a BuildKit secret, never baked into the image.
+RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
+    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && build_ca_option="" \
+    && if [ -s /run/secrets/build_ca_bundle ]; then build_ca_option="-o Acquire::https::CaInfo=/run/secrets/build_ca_bundle"; fi \
+    && apt-get ${build_ca_option} update \
+    && apt-get ${build_ca_option} install -y --no-install-recommends tesseract-ocr fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/

@@ -225,7 +225,8 @@ export function ChatWorkspace() {
               onStop={chat.cancel}
             />
             <p className="composer-disclaimer">
-              AI answers can contain mistakes. Review sources and important information.
+              AI answers can contain mistakes. Review sources and important
+              information.
             </p>
           </div>
         </main>
@@ -250,8 +251,9 @@ export function ChatWorkspace() {
         <h2 id="about-title">About your workspace</h2>
         <p>
           Queries run through the agent service using its configured model and
-          document corpus. Demo inference is labelled in the answer when enabled.
-          Attachments are saved for download; they are not added to the retrieval corpus.
+          document corpus. Demo inference is labelled in the answer when
+          enabled. Attachments provide text sources for this conversation, with
+          source references in replies. Images and scanned pages use OCR.
         </p>
         <p>
           Conversations are saved on the server until you delete them. This

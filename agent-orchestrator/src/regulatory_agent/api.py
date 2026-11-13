@@ -1,4 +1,7 @@
 """Synchronous query execution API; the engine runs in FastAPI's thread pool."""
+import base64
+import hashlib
+import json
 import secrets
 import threading
 import time
@@ -14,6 +17,7 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .attachments import UploadedFile, AttachmentError, extract_attachments, MAX_UPLOAD_BODY
 from .agent import RegulatoryAgent
 from .config import Settings
 from .contracts import Claim, Passage
@@ -61,6 +65,10 @@ class ExecutionRequest(BaseModel):
         return value
 
 
+class AttachmentExecutionRequest(ExecutionRequest):
+    attachments: list[UploadedFile] = Field(min_length=1, max_length=20)
+
+
 class Answer(BaseModel):
     claims: list[Claim] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
@@ -80,7 +88,7 @@ class ExecutionResponse(BaseModel):
     conversation_id: str
     status: Literal['answered','clarify','refused','abstained']
     mode: Literal['demo','qwen']
-    corpus: Literal['synthetic','retrieval'] = 'synthetic'
+    corpus: Literal['synthetic','retrieval','attachments'] = 'synthetic'
     answer: Answer
     answer_text: str
     metrics: Metrics
@@ -114,14 +122,15 @@ class BodyLimitMiddleware:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http' or scope['method'] != 'POST':
             return await self.app(scope,receive,send)
+        limit = MAX_UPLOAD_BODY if scope['path']=='/v1/executions/attachments' else self.max_bytes
         body = bytearray()
         while True:
             message = await receive()
             if message['type']=='http.disconnect':
                 return
             body.extend(message.get('body',b''))
-            if len(body)>self.max_bytes:
-                return await error_response(413,'REQUEST_TOO_LARGE','Request body exceeds 64 KiB.')(scope,receive,send)
+            if len(body)>limit:
+                return await error_response(413,'REQUEST_TOO_LARGE','Request body exceeds the endpoint limit.')(scope,receive,send)
             if not message.get('more_body',False):
                 break
         delivered = False
@@ -138,6 +147,9 @@ def render_answer(answer):
     lines = [answer.message] if answer.message else []
     lines.extend(f"{claim.text} [{', '.join(claim.citations)}]" for claim in answer.claims)
     lines.extend('Limitation: '+text for text in answer.limitations)
+    uploaded = list(dict.fromkeys(p.title+' (page '+str(p.page)+')' for p in answer.sources if p.authority=='UPLOAD'))
+    if uploaded:
+        lines.append('Attachment sources: '+'; '.join(uploaded))
     return '\n\n'.join(lines)
 
 
@@ -196,20 +208,40 @@ def create_app(settings: Settings | None = None):
                   status:{'model':ErrorResponse} for status in (401,409,413,422,500)},
               summary='Execute one query through the planner, tools, and critic')
     def execute(payload: ExecutionRequest, request: Request):
+        return run_execution(payload, request)
+
+    @app.post('/v1/executions/attachments', response_model=ExecutionResponse,
+              dependencies=[Depends(authorize)], summary='Execute a question with conversation attachment bytes')
+    def execute_with_attachments(payload: AttachmentExecutionRequest, request: Request):
+        metadata = payload.model_dump(mode='json', exclude={'attachments'})
+        if len(json.dumps(metadata, ensure_ascii=False).encode()) > 65536:
+            raise HTTPException(413, detail={'code':'REQUEST_TOO_LARGE','message':'Conversation metadata exceeds 64 KiB.'})
+        return run_execution(payload, request)
+
+    def run_execution(payload, request):
         if not request.app.state.execution_lock.acquire(blocking=False):
             raise HTTPException(409,detail={'code':'SERVICE_BUSY','message':'An execution is running. Retry after it completes.'})
         try:
             started = time.monotonic()
+            started_at = time.time()
+            try:
+                uploads = extract_attachments(payload.attachments) if isinstance(payload, AttachmentExecutionRequest) else None
+            except AttachmentError as exc:
+                raise HTTPException(422, detail={'code':'ATTACHMENT_ERROR','message':str(exc)}) from None
+            current_ids = ['upload-'+hashlib.sha256(base64.b64decode(file.content_base64)).hexdigest()
+                           for file in payload.attachments if file.current] if isinstance(payload, AttachmentExecutionRequest) else []
             conversation_id = payload.conversation_id or str(uuid.uuid4())
             state = request.app.state.agent.ask(
                 conversation_id,payload.question,
                 as_of=payload.as_of.isoformat() if payload.as_of else None,
                 fiscal_year=payload.fiscal_year,
-                messages=[m.model_dump() for m in payload.history] if payload.history is not None else None)
+                messages=[m.model_dump() for m in payload.history] if payload.history is not None else None,
+                attachment_passages=uploads, current_attachment_ids=current_ids, started_at=started_at)
             answer = Answer.model_validate(state['answer'])
             return ExecutionResponse(
                 execution_id=str(uuid.uuid4()), conversation_id=conversation_id,
-                status=state['status'], mode=request.app.state.settings.mode, corpus=request.app.state.corpus,
+                status=state['status'], mode=request.app.state.settings.mode,
+                corpus='attachments' if state['plan'].get('authority')=='UPLOAD' else request.app.state.corpus,
                 answer=answer, answer_text=render_answer(answer),
                 metrics=Metrics(steps=state['steps'],tokens_charged=state['tokens_charged'],
                                 revisions=state['revision'],latency_ms=round((time.monotonic()-started)*1000,2)),

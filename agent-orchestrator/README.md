@@ -25,8 +25,10 @@ The backend supplies the complete committed PostgreSQL transcript on every turn,
 chats and lost/legacy agent checkpoints recover their context. Only user/assistant roles are
 accepted; no caller-supplied system instructions are allowed.
 
-The model receives these as actual chat messages for planning, drafting and review, rather
-than a nested JSON history blob. Standalone API clients can omit history and reuse
+The planner receives these as actual chat messages rather than a nested JSON history blob.
+For fresh uploads, drafting and review use the resolved question, current filenames and fresh
+evidence without prior assistant answers, which prevents old file values from anchoring the new
+answer. Follow-ups without new files continue to receive the ordered conversation context. Standalone API clients can omit history and reuse
 `conversation_id`; SQLite retains the complete compact transcript, including supplied history,
 across restarts. New answers are stored as valid JSON without retrieved passage bodies. The old
 six-turn, 1,500-character question and 2,000-character serialized-answer cuts are removed.
@@ -346,3 +348,43 @@ the executor supplies it so selected evidence matches the search. All other tool
 are unchanged. `AVL` is an additional authority, without relabeling enterprise policies as RBI/SEBI/Tax.
 Execution and health responses report `corpus="retrieval"` when the remote service is configured.
 The standalone notebook retains its synthetic teaching fixtures.
+
+## Chat attachment evidence
+
+The backend sends the current files and earlier files from the same conversation to
+`POST /v1/executions/attachments`. It extends the execution JSON with `attachments`, each
+containing `name`, `mime_type`, and `content_base64`. The optional `current` flag distinguishes
+new files from archived files when several documents are available. The ordinary execution endpoint retains
+its 64-KiB limit; the file endpoint permits a bounded 36-MiB envelope with at most 64 KiB of
+conversation metadata. Raw files are limited to 5 MB each, 25 MB total, and 20 unique files per
+conversation request. These limits fail explicitly; bytes are not silently dropped.
+
+The agent extracts TXT/MD/CSV/JSON, PDF, DOCX paragraphs/tables, and XLSX cached cell values.
+Images and scanned PDF pages use Tesseract OCR (the first frame for animated images), not visual
+reasoning. Formula execution, macros, embedded instructions and external links are not run.
+PDF pages and spreadsheet sheet names are retained in source metadata. Unsupported, unreadable,
+encrypted, overlarge or over-budget extraction produces an explicit file error.
+
+Parsing runs in separate processes with wall-clock bounds and Linux CPU/memory limits.
+Extraction workers receive a minimal environment without model/API credentials. Office
+archive expansion and image dimensions are bounded. Each file may contain up to 300,000 extracted
+characters (500,000 combined) and PDFs up to 100 pages; the whole extraction phase is limited to 30 seconds and is
+part of the query deadline. OCR accuracy depends on the input quality.
+
+File passages use authority `UPLOAD`, deterministic content hashes and page/chunk citations.
+A conversation-scoped lexical search selects relevant excerpts (at most two chunks per selected
+file) for the same executor and critic checks as indexed evidence. Answers include attachment
+filenames. This is excerpt retrieval, not a guarantee that every part of a long file was read.
+Extracted passages survive in the conversation checkpoint; the backend also re-sends archived
+PostgreSQL files so old chats recover even if that checkpoint is lost. Uploaded files are not
+added to the shared organizational corpus and are not available to other conversation IDs.
+
+Docker installs OCR automatically. Local development requires the updated Python dependencies
+and a `tesseract` executable on PATH (for example, `brew install tesseract` on macOS).
+
+For a corporate HTTPS proxy, an optional trusted public CA bundle can be supplied only for
+package installation, without disabling TLS or copying it into the runtime image:
+
+```bash
+docker build --secret id=build_ca_bundle,src=/absolute/path/to/trusted-ca-bundle.pem -t regulatory-agent:api .
+```

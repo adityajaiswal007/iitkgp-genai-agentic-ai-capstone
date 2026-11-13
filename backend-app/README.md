@@ -110,7 +110,7 @@ invalid responses fail the turn rather than returning canned content. The backen
 Reasoning state lives in the agent, while PostgreSQL supplies authoritative chat context on every
 request. The agent sends that transcript to Qwen as user/assistant messages. History exceeding
 200 messages or a 64-KiB request is rejected explicitly instead of silently truncated. Attachments are
-stored for download, not automatically analysed or indexed. Deleting a UI chat does not remove
+stored for download and forwarded as conversation-scoped evidence to the agent. Deleting a UI chat does not remove
 its agent checkpoint. A browser abort stops waiting but does not undo agent execution.
 Concurrent retries can still execute inference more than once before a deduplicated commit.
 
@@ -213,4 +213,4 @@ Attachment bytes are stored in PostgreSQL `bytea` columns, inside the same trans
 
 Retries compare both message text and the names/content hashes of the files in selection order. Reusing a request ID with changed attachments returns 409; retries do not create additional stored files. Type/size failures return 400, 413, or 415 without committing a partial message.
 
-The attachment migration is applied automatically when the API container starts. After updating the code, rebuild the API image with `docker compose --profile app up -d --build --wait`. For host development, run `npm run db:migrate` before starting the API. The demo orchestrator acknowledges uploads but does not extract or analyse document/image content.
+The attachment migration is applied automatically when the API container starts. After updating the code, rebuild the API image with `docker compose --profile app up -d --build --wait`. For host development, run `npm run db:migrate` before starting the API. The backend forwards validated file bytes and prior chat files to the agent attachment endpoint. The agent extracts text/OCR and uses those sources for answer generation. Archived files are deduplicated by content hash; other conversation IDs are excluded.

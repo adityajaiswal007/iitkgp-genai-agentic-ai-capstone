@@ -85,7 +85,7 @@ Use the paperclip button or drop files onto the composer. Up to five files can b
 
 Selected files are sent as multipart form data and stored with the user message in PostgreSQL. Saved messages show download links after a reload. Downloading returns the original bytes. Failed uploads retain the selected files and draft so the user can retry. The existing typing effect applies to replies after upload as well.
 
-File analysis is not connected. Replies explicitly say attached files have not been read or analysed. Uploading an attachment does not automatically add it to a RAG corpus.
+Attachments are forwarded to the agent as conversation-scoped sources. Replies can use extracted document text or image/scanned-page OCR and include citations/filenames. Existing chat files remain available to follow-ups. They are not added to the shared organizational corpus. XLSX formulas are not executed; image analysis uses recognized text rather than visual reasoning.
 
 ## Conversation URLs
 

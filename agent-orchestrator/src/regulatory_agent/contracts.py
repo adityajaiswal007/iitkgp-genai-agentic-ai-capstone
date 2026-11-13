@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-Authority = Literal['RBI', 'SEBI', 'INCOME_TAX', 'AVL']
+Authority = Literal['RBI', 'SEBI', 'INCOME_TAX', 'AVL', 'UPLOAD']
 ToolName = Literal['search_documents', 'fetch_passages', 'lookup_document_status']
 
 class Schema(BaseModel):
@@ -123,6 +123,8 @@ class AgentState(TypedDict):
     fiscal_year: str | None
     history: list[dict]
     messages: list[dict]
+    attachment_passages: list[dict]
+    current_attachment_ids: list[str]
     plan: dict
     evidence: list[dict]
     document_status: list[dict]

@@ -281,7 +281,7 @@ describe('attachments', () => {
     expect(files[0].mimeType).toBe('text/csv');
     expect(files[0].data).toBeUndefined();
     expect(files[0].sha256).toBeUndefined();
-    expect(sent.body.messages[1].content).toContain('not read or analysed');
+    expect(sent.body.messages[1].content).not.toContain('not read or analysed');
     const saved = await api()
       .get(`/api/conversations/${conversation.id}/messages`)
       .expect(200);
@@ -298,6 +298,44 @@ describe('attachments', () => {
       .expect(404);
   });
 
+  it('forwards prior attachment bytes on follow-ups and isolates other conversations', async () => {
+    const conversation = await create();
+    const url = `/api/conversations/${conversation.id}/messages`;
+    await api()
+      .post(url)
+      .field('content', 'Read my revenue file')
+      .field('requestId', randomUUID())
+      .field('expectedVersion', '0')
+      .attach('files', csv, { filename: 'revenue.csv' })
+      .expect(201);
+    await api()
+      .post(url)
+      .send({
+        content: 'What is the revenue?',
+        requestId: randomUUID(),
+        expectedVersion: 1,
+      })
+      .expect(201);
+    const forwarded = agentRequests.at(-1) as unknown as {
+      attachments: { name: string; content_base64: string }[];
+    };
+    expect(forwarded.attachments).toHaveLength(1);
+    expect(forwarded.attachments[0].name).toBe('revenue.csv');
+    expect(forwarded.attachments[0]).toHaveProperty('current', false);
+    expect(
+      Buffer.from(forwarded.attachments[0].content_base64, 'base64'),
+    ).toEqual(csv);
+    const other = await create();
+    await api()
+      .post(`/api/conversations/${other.id}/messages`)
+      .send({
+        content: 'A separate conversation',
+        requestId: randomUUID(),
+        expectedVersion: 0,
+      })
+      .expect(201);
+    expect(agentRequests.at(-1)).not.toHaveProperty('attachments');
+  });
   it('deduplicates attachment retries and rejects reused keys with different files', async () => {
     const conversation = await create();
     const requestId = randomUUID();

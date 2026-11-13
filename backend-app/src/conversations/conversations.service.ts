@@ -134,10 +134,59 @@ export class ConversationsService {
       select: { role: true, content: true },
       loadEagerRelations: false,
     });
+    const savedUploads = await this.db
+      .getRepository(Attachment)
+      .createQueryBuilder('attachment')
+      .innerJoin('attachment.message', 'message')
+      .where('message.conversation_id = :id', { id })
+      .addSelect('attachment.sha256')
+      .orderBy('message.sequence', 'ASC')
+      .addOrderBy('attachment.position', 'ASC')
+      .getMany();
+    const attachmentContext = [
+      ...new Map(
+        [...savedUploads, ...uploads].map((file) => [file.sha256, file]),
+      ).values(),
+    ];
+    // Check metadata before loading archived bytea values into memory.
+    if (
+      attachmentContext.length > 20 ||
+      attachmentContext.reduce((sum, file) => sum + file.size, 0) >
+        25 * 1024 * 1024
+    )
+      throw new BadRequestException(
+        'Conversation attachment limit exceeded: up to 20 files and 25 MB total.',
+      );
+    const archivedIds = attachmentContext.flatMap((file) =>
+      file instanceof Attachment ? [file.id] : [],
+    );
+    const archivedData = archivedIds.length
+      ? await this.db
+          .getRepository(Attachment)
+          .createQueryBuilder('attachment')
+          .whereInIds(archivedIds)
+          .addSelect('attachment.data')
+          .getMany()
+      : [];
+    const dataById = new Map(archivedData.map((file) => [file.id, file.data]));
+    const filesForAgent = attachmentContext.map((file) => {
+      const data =
+        file instanceof Attachment ? dataById.get(file.id) : file.data;
+      if (!data)
+        throw new ConflictException(
+          'A saved attachment is no longer available. Reload the conversation.',
+        );
+      return {
+        name: file.name,
+        mimeType: file.mimeType,
+        data,
+        current: !(file instanceof Attachment),
+      };
+    });
     const content = await this.orchestrator.reply(
       id,
       contentText,
-      uploads.length,
+      filesForAgent,
       history.map(({ role, content }) => ({ role, content })),
     );
     return this.db.transaction(async (manager) => {

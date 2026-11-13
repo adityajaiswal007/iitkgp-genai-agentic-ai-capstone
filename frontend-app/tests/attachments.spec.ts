@@ -170,3 +170,30 @@ test("retains selected attachments if the upload fails", async ({ page }) => {
     page.getByRole("textbox", { name: "Message Operations Copilot" }),
   ).toHaveValue("Keep my draft");
 });
+
+test("uses an uploaded CSV to answer and retains it for a follow-up", async ({
+  page,
+}) => {
+  const input = page.getByRole("textbox", {
+    name: "Message Operations Copilot",
+  });
+  await page.getByLabel("Choose attachments").setInputFiles({
+    name: "revenue-proof.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("metric,value\nRevenue,8472\n"),
+  });
+  await input.fill("What is the Revenue value in the attached CSV?");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  const replies = page.locator(".assistant-message .message-content");
+  await expect(replies.first()).toContainText("8472", { timeout: 30000 });
+  await expect(replies.first()).toContainText("upload:");
+  await expect(page.getByRole("button", { name: "Stop response" })).toHaveCount(
+    0,
+    { timeout: 30000 },
+  );
+  await input.fill("What was the Revenue value in my CSV again?");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(replies).toHaveCount(2, { timeout: 30000 });
+  await expect(replies.last()).toContainText("8472", { timeout: 30000 });
+  await expect(replies.last()).not.toContainText("not read or analysed");
+});

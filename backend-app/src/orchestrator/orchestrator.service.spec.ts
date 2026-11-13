@@ -65,10 +65,21 @@ it('executes a real HTTP query with a stable conversation ID and preserves citat
   });
   expect(service().mode).toBe('agent');
 });
-it('does not claim uploaded files were analysed', async () => {
-  expect(await service().reply('conversation-1', 'Pressure?', 1)).toContain(
-    'not read or analysed',
-  );
+it('forwards attachment bytes to the attachment execution API', async () => {
+  const bytes = Buffer.from('metric,value\nRevenue,8472\n');
+  const result = await service().reply('conversation-1', 'What is revenue?', [
+    { name: 'report.csv', mimeType: 'text/csv', data: bytes },
+  ]);
+  expect(received.path).toBe('/v1/executions/attachments');
+  expect((received.body as { attachments: unknown[] }).attachments).toEqual([
+    {
+      name: 'report.csv',
+      mime_type: 'text/csv',
+      content_base64: bytes.toString('base64'),
+      current: true,
+    },
+  ]);
+  expect(result).toBe('Valve-B has a limit of 12 bar. [BOM:1]');
 });
 it('reports upstream failures without leaking provider details', async () => {
   status = 500;
@@ -106,14 +117,17 @@ it('sends the saved transcript in order alongside the follow-up', async () => {
       content: 'Sarah Jenkins, Marcus Vance, Kenji Sato',
     },
   ];
-  await service().reply('conversation-1', 'share their email', 0, history);
+  await service().reply('conversation-1', 'share their email', [], history);
   expect((received.body as { history: unknown }).history).toEqual(history);
 });
 
 it('rejects oversized transcripts explicitly instead of silently dropping context', async () => {
   await expect(
-    service().reply('conversation-1', 'Follow-up', 0, [
-      { role: 'assistant', content: '界'.repeat(24000) },
-    ]),
+    service().reply(
+      'conversation-1',
+      'Follow-up',
+      [],
+      [{ role: 'assistant', content: '界'.repeat(24000) }],
+    ),
   ).rejects.toThrow('exceeds the agent context limit');
 });
