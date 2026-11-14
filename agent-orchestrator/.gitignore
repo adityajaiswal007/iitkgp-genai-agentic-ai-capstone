@@ -22,3 +22,4 @@ dist/
 *.pem
 *.key
 !.env.qwen.example
+!.env.embeddings.example

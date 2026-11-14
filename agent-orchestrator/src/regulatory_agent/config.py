@@ -14,6 +14,12 @@ class Settings:
     api_key: str = field(default='', repr=False)
     retrieval_base_url: str = ''
     retrieval_api_key: str = field(default='', repr=False)
+    embedding_base_url: str = ''
+    embedding_model: str = 'bge-small-en-v1.5'
+    embedding_api_key: str = field(default='', repr=False)
+    embedding_ca_cert: str = ''
+    embedding_timeout_seconds: float = 15
+    embedding_dimensions: int | None = None
     max_steps: int = 10
     max_revisions: int = 1
     token_budget: int = 48000
@@ -37,6 +43,12 @@ class Settings:
             api_key=os.getenv('AGENT_API_KEY',''),
             retrieval_base_url=os.getenv('RAG_BASE_URL',''),
             retrieval_api_key=os.getenv('RAG_API_KEY',''),
+            embedding_base_url=os.getenv('EMBEDDING_BASE_URL',''),
+            embedding_model=os.getenv('EMBEDDING_MODEL','bge-small-en-v1.5'),
+            embedding_api_key=os.getenv('EMBEDDING_API_KEY',''),
+            embedding_ca_cert=os.getenv('EMBEDDING_CA_CERT',''),
+            embedding_timeout_seconds=float(os.getenv('EMBEDDING_TIMEOUT_SECONDS','15')),
+            embedding_dimensions=int(os.environ['EMBEDDING_DIMENSIONS']) if os.getenv('EMBEDDING_DIMENSIONS') else None,
             max_steps=int(os.getenv('AGENT_MAX_STEPS','10')),
             max_revisions=int(os.getenv('AGENT_MAX_REVISIONS','1')),
             token_budget=int(os.getenv('AGENT_TOKEN_BUDGET','48000')),
