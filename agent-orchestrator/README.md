@@ -1,7 +1,7 @@
 # Regulatory Agent — Python execution API and notebook
 
-Hosted query embeddings: see [EMBEDDINGS.md](EMBEDDINGS.md) for configuration, the new
-`POST /v1/query-embeddings` endpoint, and the handoff boundary with the retrieval team.
+The orchestrator sends search text and filters to the document-retrieval service.
+That service owns embeddings, vector search, and retrieval ranking.
 
 Python 3.11+ project with a FastAPI service for the Qwen3 planner → executor → critic workflow.
 The notebook remains a standalone teaching/demo artifact. The API imports normal Python modules;

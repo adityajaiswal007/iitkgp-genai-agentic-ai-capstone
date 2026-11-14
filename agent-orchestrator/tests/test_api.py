@@ -21,6 +21,7 @@ def test_health_and_openapi(tmp_path):
         assert client.get('/health').json() == {'status':'ok','mode':'demo','corpus':'synthetic'}
         spec = client.get('/openapi.json').json()
         assert '/v1/executions' in spec['paths']
+        assert client.post('/v1/query-embeddings',json={'input':['bank complaint']}).status_code == 404
         assert client.get('/docs').status_code == 200
 
 

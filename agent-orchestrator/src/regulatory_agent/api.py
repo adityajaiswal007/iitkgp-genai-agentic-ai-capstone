@@ -20,7 +20,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .attachments import UploadedFile, AttachmentError, extract_attachments, MAX_UPLOAD_BODY
 from .agent import RegulatoryAgent
 from .config import Settings
-from .embeddings import EmbeddingClient, EmbeddingError, QueryEmbeddingRequest, QueryEmbeddingResponse
 from .contracts import Claim, Passage
 from .models import DemoModel, QwenModel
 from .tools import CorpusTools, DEMO_DOCUMENTS, HttpCorpusTools
@@ -166,17 +165,9 @@ def create_app(settings: Settings | None = None):
                  if config.retrieval_base_url else CorpusTools(DEMO_DOCUMENTS))
         app.state.corpus = 'retrieval' if config.retrieval_base_url else 'synthetic'
         app.state.agent = RegulatoryAgent(model,tools,config.database_path,config.limits())
-        app.state.embeddings = None
         try:
-            if config.embedding_base_url:
-                app.state.embeddings = EmbeddingClient(
-                    config.embedding_base_url, model=config.embedding_model,
-                    api_key=config.embedding_api_key, ca_cert=config.embedding_ca_cert,
-                    timeout=config.embedding_timeout_seconds, dimensions=config.embedding_dimensions)
             yield
         finally:
-            if app.state.embeddings is not None:
-                app.state.embeddings.close()
             app.state.agent.close()
             if isinstance(tools, HttpCorpusTools):
                 tools.close()
@@ -211,25 +202,6 @@ def create_app(settings: Settings | None = None):
     def health(request: Request):
         # This reports local startup, not a successful live-model connectivity probe.
         return HealthResponse(mode=request.app.state.settings.mode, corpus=request.app.state.corpus)
-
-    @app.post('/v1/query-embeddings', response_model=QueryEmbeddingResponse,
-              dependencies=[Depends(authorize)], responses={
-                  status:{'model':ErrorResponse} for status in (401,409,413,422,502,503,504)},
-              summary='Embed English search queries for a compatible vector-search consumer')
-    def query_embeddings(payload: QueryEmbeddingRequest, request: Request):
-        client = request.app.state.embeddings
-        if client is None:
-            raise HTTPException(503,detail={'code':'EMBEDDING_NOT_CONFIGURED',
-                                         'message':'Configure EMBEDDING_BASE_URL to enable query embeddings.'})
-        if not request.app.state.execution_lock.acquire(blocking=False):
-            raise HTTPException(409,detail={'code':'SERVICE_BUSY',
-                                         'message':'An execution is running. Retry after it completes.'})
-        try:
-            return client.embed_queries(payload.input)
-        except EmbeddingError as exc:
-            raise HTTPException(exc.status_code,detail={'code':exc.code,'message':str(exc)}) from None
-        finally:
-            request.app.state.execution_lock.release()
 
     @app.post('/v1/executions', response_model=ExecutionResponse,
               dependencies=[Depends(authorize)], responses={
