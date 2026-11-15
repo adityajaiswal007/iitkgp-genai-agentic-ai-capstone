@@ -386,8 +386,42 @@ Docker installs OCR automatically. Local development requires the updated Python
 and a `tesseract` executable on PATH (for example, `brew install tesseract` on macOS).
 
 For a corporate HTTPS proxy, an optional trusted public CA bundle can be supplied only for
-package installation, without disabling TLS or copying it into the runtime image:
+OS package installation and tokenizer downloads, without disabling TLS or copying
+it into the runtime image:
 
 ```bash
 docker build --secret id=build_ca_bundle,src=/absolute/path/to/trusted-ca-bundle.pem -t regulatory-agent:api .
 ```
+
+### Caller token allowance
+
+Both execution endpoints accept an optional positive integer `token_budget`.
+Each execution uses the smaller of this allowance and `AGENT_TOKEN_BUDGET`,
+without changing other executions' limits. `metrics.tokens_charged` includes all
+model roles and attempts; `metrics.estimated_tokens` identifies conservative
+reservations retained when provider usage is unavailable. Provider-reported
+usage replaces the corresponding reservation. The backend owns daily budgets.
+
+### Token reservation and the daily allowance
+
+Qwen calls reserve the tokenized chat prompt (including system instructions,
+JSON schemas, conversation history and retrieved evidence), a 32-token serving
+margin, and `AGENT_MAX_OUTPUT_TOKENS`. The chat template's thinking setting
+matches inference. Provider-reported total usage replaces that reservation;
+missing usage retains it. Calls that cannot fit the remaining allowance are
+still blocked before inference.
+
+Host runs use `QWEN_TOKENIZER` (a Hugging Face model ID or local tokenizer
+directory), defaulting to `QWEN_MODEL`. Install the updated requirements first.
+The tokenizer must match the served model and its chat template. Docker bundles
+Qwen3-8B tokenizer files at `/opt/qwen-tokenizer`, so runtime token counting
+requires neither model weights nor a Hugging Face connection. If serving a
+different tokenizer, build with `--build-arg QWEN_TOKENIZER_MODEL=<model-id>` or
+mount its tokenizer files and set `QWEN_TOKENIZER` to that container path.
+Offline/custom adapters without token-count support retain the conservative
+byte-based fallback. Tokenizer configuration failures stop before inference.
+
+The old byte-per-token allowance can reject a normal RAG drafting prompt even
+with thousands of daily tokens left; increasing the daily cap hides this problem.
+Qwen's documented tokenizer and chat-template usage is shown in its
+[official model card](https://huggingface.co/Qwen/Qwen3-8B#quickstart).

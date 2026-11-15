@@ -1,5 +1,6 @@
 import type {
   Attachment,
+  DailyUsage,
   Conversation,
   ConversationSummary,
   Message,
@@ -35,6 +36,13 @@ function conversation(value: unknown): ConversationSummary {
     typeof item.updatedAt !== "string"
   )
     throw new Error("Invalid conversation response.");
+  for (const key of ["tokensCharged", "estimatedTokens"]) {
+    if (
+      item[key] != null &&
+      (!Number.isSafeInteger(item[key]) || Number(item[key]) < 0)
+    )
+      throw new Error("Invalid token usage response.");
+  }
   return item as ConversationSummary;
 }
 function attachment(value: unknown): Attachment {
@@ -145,6 +153,23 @@ export async function downloadAttachment(
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export const chatApi = {
+  dailyUsage: (signal?: AbortSignal) =>
+    request(
+      "/conversations/usage/daily",
+      (value) => {
+        const item = object(value);
+        if (
+          typeof item.day !== "string" ||
+          typeof item.timezone !== "string" ||
+          !["limit", "used", "estimated", "remaining"].every(
+            (key) => Number.isSafeInteger(item[key]) && Number(item[key]) >= 0,
+          )
+        )
+          throw new Error("Invalid daily usage response.");
+        return item as DailyUsage;
+      },
+      { signal },
+    ),
   list: (pageNumber = 1, search = "", signal?: AbortSignal) =>
     request(
       `/conversations?page=${pageNumber}&pageSize=100&search=${encodeURIComponent(search)}`,

@@ -7,6 +7,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
+      QWEN_TOKENIZER: ${QWEN_TOKENIZER:-/opt/qwen-tokenizer}
       AGENT_MODE: ${AGENT_MODE:-demo}
       AGENT_DATABASE_PATH: /data/conversations.sqlite
       AGENT_API_KEY: ${AGENT_API_KEY:-}

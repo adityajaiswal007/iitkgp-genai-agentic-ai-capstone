@@ -14,11 +14,17 @@ RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
+ARG QWEN_TOKENIZER_MODEL=Qwen/Qwen3-8B
+ENV QWEN_TOKENIZER=/opt/qwen-tokenizer \
+    HF_HUB_DISABLE_XET=1
 RUN python -m pip install . \
     && python -m pip check \
     && useradd --create-home --uid 1000 agent \
     && mkdir -p /data /workspace \
     && chown agent:agent /data /workspace
+RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
+    if [ -s /run/secrets/build_ca_bundle ]; then export REQUESTS_CA_BUNDLE=/run/secrets/build_ca_bundle; fi \
+    && python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('${QWEN_TOKENIZER_MODEL}', trust_remote_code=False).save_pretrained('/opt/qwen-tokenizer')"
 
 FROM base AS test
 COPY tests/ ./tests/

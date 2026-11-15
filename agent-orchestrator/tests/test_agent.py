@@ -26,6 +26,14 @@ class AgentTests(unittest.TestCase):
         self.agents.append(a)
         return a
 
+    def test_request_budget_does_not_leak_between_executions(self):
+        agent = self.agent()
+        stopped = agent.ask('limited', 'RBI complaint', token_budget=1)
+        self.assertEqual(stopped['tokens_charged'], 0)
+        normal = agent.ask('normal', 'What is the RBI demo complaint process?')
+        self.assertEqual(normal['status'], 'answered')
+        self.assertGreater(normal['tokens_charged'], 0)
+
     def test_three_tools_and_cited_answer(self):
         s = self.agent().ask('t1', 'What is the RBI demo complaint process?')
         self.assertEqual(s['status'], 'answered')
@@ -208,6 +216,60 @@ class AgentTests(unittest.TestCase):
         s = self.agent(ScriptedModel({'executor':['bad JSON']})).ask('t','RBI complaint')
         self.assertEqual(s['status'], 'answered')
         self.assertEqual(s['steps'], 7)
+
+    def test_tokenizer_count_allows_large_byte_prompts_within_daily_allowance(self):
+        class CountedModel(DemoModel):
+            def count_input_tokens(self, role, payload, schema):
+                return 1500
+        model = CountedModel()
+        agent = self.agent(model)
+        # A normal transcript plus retrieved evidence can exceed 10k bytes,
+        # even when the provider prompt contains far fewer than 10k tokens.
+        transcript = [{'role':'user','content':'Previous context. ' * 700}]
+        state = agent.ask('metered', 'What is the RBI demo complaint process?',
+                          messages=transcript, token_budget=10000)
+        self.assertEqual(state['status'], 'answered')
+        self.assertEqual(state['tokens_charged'], 400)
+
+    def test_tokenizer_reservation_still_blocks_calls_that_cannot_fit(self):
+        class CountedModel(DemoModel):
+            calls = 0
+            def count_input_tokens(self, role, payload, schema):
+                return 10000
+            def complete(self, *args, **kwargs):
+                self.calls += 1
+                return super().complete(*args, **kwargs)
+        model = CountedModel()
+        state = self.agent(model).ask('capped', 'RBI complaint', token_budget=10000)
+        self.assertEqual(state['status'], 'abstained')
+        self.assertEqual(model.calls, 0)
+        self.assertEqual(state['tokens_charged'], 0)
+
+    def test_tokenizer_failure_stops_without_paid_calls(self):
+        class BrokenTokenizer(DemoModel):
+            calls = 0
+            def count_input_tokens(self, *args):
+                raise OSError('Tokenizer files unavailable')
+            def complete(self, *args, **kwargs):
+                self.calls += 1
+                return super().complete(*args, **kwargs)
+        model = BrokenTokenizer()
+        state = self.agent(model).ask('bad-tokenizer', 'RBI complaint', token_budget=10000)
+        self.assertEqual(model.calls, 0)
+        self.assertEqual(state['tokens_charged'], 0)
+        self.assertTrue(any(e.get('code') == 'TOKENIZER_CONFIGURATION' for e in state['trace']))
+
+    def test_missing_usage_retains_tokenized_reservations(self):
+        class NoUsage(DemoModel):
+            def count_input_tokens(self, *args):
+                return 1500
+            def complete(self, *args, **kwargs):
+                raw, _ = super().complete(*args, **kwargs)
+                return raw, None
+        state = self.agent(NoUsage()).ask('unknown', 'RBI complaint', token_budget=10000)
+        self.assertEqual(state['status'], 'answered')
+        self.assertEqual(state['tokens_charged'], 3 * (1500 + 32 + 900))
+        self.assertEqual(state['estimated_tokens'], state['tokens_charged'])
 
     def test_missing_usage_charges_reservation(self):
         class NoUsage(DemoModel):

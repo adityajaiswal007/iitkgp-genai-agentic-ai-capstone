@@ -38,6 +38,7 @@ beforeEach(() => {
   response = {
     answer_text: 'Valve-B has a limit of 12 bar. [BOM:1]',
     mode: 'qwen',
+    metrics: { tokens_charged: 300, estimated_tokens: 0 },
   };
 });
 function service() {
@@ -53,7 +54,11 @@ it('executes a real HTTP query with a stable conversation ID and preserves citat
     'conversation-1',
     'What is the pressure limit?',
   );
-  expect(result).toBe('Valve-B has a limit of 12 bar. [BOM:1]');
+  expect(result).toEqual({
+    content: 'Valve-B has a limit of 12 bar. [BOM:1]',
+    tokensCharged: 300,
+    estimatedTokens: 0,
+  });
   expect(received).toEqual({
     path: '/v1/executions',
     key: 'service-test-key',
@@ -79,7 +84,11 @@ it('forwards attachment bytes to the attachment execution API', async () => {
       current: true,
     },
   ]);
-  expect(result).toBe('Valve-B has a limit of 12 bar. [BOM:1]');
+  expect(result).toEqual({
+    content: 'Valve-B has a limit of 12 bar. [BOM:1]',
+    tokensCharged: 300,
+    estimatedTokens: 0,
+  });
 });
 it('reports upstream failures without leaking provider details', async () => {
   status = 500;
@@ -130,4 +139,13 @@ it('rejects oversized transcripts explicitly instead of silently dropping contex
       [{ role: 'assistant', content: '界'.repeat(24000) }],
     ),
   ).rejects.toThrow('exceeds the agent context limit');
+});
+
+it('passes the reserved allowance and rejects missing usage metadata', async () => {
+  await service().reply('conversation-1', 'Question?', [], [], 1234);
+  expect(received.body).toMatchObject({ token_budget: 1234 });
+  response = { answer_text: 'Unmetered', mode: 'qwen' };
+  await expect(service().reply('conversation-1', 'Question?')).rejects.toThrow(
+    BadGatewayException,
+  );
 });

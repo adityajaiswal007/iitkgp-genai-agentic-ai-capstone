@@ -214,3 +214,34 @@ Attachment bytes are stored in PostgreSQL `bytea` columns, inside the same trans
 Retries compare both message text and the names/content hashes of the files in selection order. Reusing a request ID with changed attachments returns 409; retries do not create additional stored files. Type/size failures return 400, 413, or 415 without committing a partial message.
 
 The attachment migration is applied automatically when the API container starts. After updating the code, rebuild the API image with `docker compose --profile app up -d --build --wait`. For host development, run `npm run db:migrate` before starting the API. The backend forwards validated file bytes and prior chat files to the agent attachment endpoint. The agent extracts text/OCR and uses those sources for answer generation. Archived files are deduplicated by content hash; other conversation IDs are excluded.
+
+### Daily token budgets
+
+`USER_DAILY_TOKEN_LIMIT` defaults to `10000`; `TOKEN_BUDGET_TIMEZONE` defaults to
+`Asia/Kolkata`. The allowance resets at midnight in that timezone. Change these
+server environment variables and restart the backend to apply them. Existing
+spending remains counted against the new limit. Run `npm run db:migrate` before
+starting an updated backend.
+
+`GET /api/conversations/usage/daily` returns `{ day, timezone, limit, used,
+estimated, remaining }` for the browser's `X-Client-ID`. Conversation list, detail,
+and send responses include `tokensCharged` and `estimatedTokens` across all days;
+`null` means there is no recorded usage. Historical tokens cannot be reconstructed.
+Daily exhaustion returns HTTP 429 with `error.code=TOKEN_BUDGET_EXCEEDED`.
+
+PostgreSQL reservations prevent concurrent requests from spending the same daily
+allowance. One request reserves the remaining allowance until its result is saved.
+Duplicate request IDs cannot trigger additional inference. Paid retries and all
+agent model roles count. Deleting a conversation does not delete its usage ledger.
+Requests are charged to the day their reservation was created. Agent execution
+limits still apply independently.
+
+Known pre-inference rejections (validation errors or an agent busy response)
+release the reservation and permit a retry. Missing or invalid usage, timeouts,
+and crashes retain their reserved allowance
+as estimated usage until the daily reset; they are not automatically refunded.
+After a crash, the same request ID cannot be rerun; a pending conversation can
+accept a different request after ten minutes (longer than the agent's 120-second
+execution deadline). The app identifies browsers, not authenticated accounts;
+clearing browser storage or using another browser creates a new allowance.
+This does not meter OCR/retrieval providers outside the orchestrator's model calls.

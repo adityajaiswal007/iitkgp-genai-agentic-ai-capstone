@@ -134,6 +134,8 @@ class AgentState(TypedDict):
     status: str
     revision: int
     steps: int
+    token_budget: int
+    estimated_tokens: int
     tokens_charged: int
     trace: list[dict]
     seen_actions: list[str]

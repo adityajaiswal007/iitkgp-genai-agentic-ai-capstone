@@ -53,7 +53,13 @@ export class ApiExceptionFilter implements ExceptionFilter {
       );
     response.status(status).json({
       error: {
-        code: codes[status] ?? 'INTERNAL_ERROR',
+        code:
+          body &&
+          typeof body === 'object' &&
+          'code' in body &&
+          body.code === 'TOKEN_BUDGET_EXCEEDED'
+            ? body.code
+            : (codes[status] ?? 'INTERNAL_ERROR'),
         message,
         ...(Array.isArray(details) ? { details } : {}),
         ...(status === 429 &&

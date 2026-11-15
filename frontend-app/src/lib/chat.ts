@@ -12,7 +12,18 @@ export type Message = {
   attachments?: Attachment[];
 };
 
+export type DailyUsage = {
+  day: string;
+  timezone: string;
+  limit: number;
+  used: number;
+  estimated: number;
+  remaining: number;
+};
+
 export type ConversationSummary = {
+  tokensCharged?: number | null;
+  estimatedTokens?: number | null;
   id: string;
   title: string;
   version: number;

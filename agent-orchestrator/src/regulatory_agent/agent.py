@@ -62,18 +62,35 @@ class RegulatoryAgent:
         s['steps'] += 1
 
     def model_json(self, s, role, payload, schema):
-        # Reserve an intentionally conservative byte-based input allowance plus output cap.
+        # Reserve tokenized input plus the maximum possible completion.
         # Failed/no-usage calls retain the FULL reservation; no unmetered SDK retries.
         for attempt in range(2):
             request_payload = dict(payload)
             if attempt:
                 request_payload['repair_instruction'] = 'Previous response failed. Return valid schema JSON only.'
             messages = build_messages(role, request_payload, schema)
-            reservation = len(json.dumps(messages, ensure_ascii=False).encode('utf-8')) + 512 + self.limits.max_output_tokens
-            if s['tokens_charged'] + reservation > self.limits.token_budget:
+            counter = getattr(self.model, 'count_input_tokens', None)
+            if counter is not None:
+                try:
+                    input_tokens = counter(role, request_payload, schema)
+                    if type(input_tokens) is not int or input_tokens < 0:
+                        raise ValueError('Invalid tokenizer count.')
+                except Exception:
+                    raise ControlledStop('TOKENIZER_CONFIGURATION',
+                        'Cannot count model tokens. Check the Qwen tokenizer configuration.') from None
+                # Count the same chat template used by inference, plus a small
+                # margin for serving-side template differences and the output cap.
+                reservation = input_tokens + 32 + self.limits.max_output_tokens
+            else:
+                # Offline/custom adapters without a tokenizer retain the safe fallback.
+                reservation = len(json.dumps(messages, ensure_ascii=False).encode('utf-8')) + 512 + self.limits.max_output_tokens
+            if s['tokens_charged'] + reservation > s['token_budget']:
+                self.event(s, 'budget', 'reservation_rejected', role=role,
+                           required=reservation, remaining=s['token_budget']-s['tokens_charged'])
                 raise ControlledStop('TOKEN_CAP', 'Insufficient token allowance for another model call.')
             self.take_step(s)
             s['tokens_charged'] += reservation
+            s['estimated_tokens'] += reservation
             start = time.monotonic()
             try:
                 raw, usage = call_with_timeout(
@@ -84,7 +101,8 @@ class RegulatoryAgent:
                     if not isinstance(usage, int) or usage < 0:
                         raise PermanentModelError('Invalid provider usage metadata.')
                     s['tokens_charged'] += usage - reservation
-                    if usage > reservation or s['tokens_charged'] > self.limits.token_budget:
+                    s['estimated_tokens'] -= reservation
+                    if usage > reservation or s['tokens_charged'] > s['token_budget']:
                         raise ControlledStop('PROVIDER_USAGE_OVERRUN', 'Provider exceeded reserved usage; stopping.')
                 parsed = parse_json(raw, schema)
                 self.event(s,'model',role,ok=True,attempt=attempt+1,
@@ -305,7 +323,7 @@ class RegulatoryAgent:
         self.event(s,'control','finished',status=s['status'], tokens_charged=s['tokens_charged'])
         return s
 
-    def ask(self, thread_id, question, *, as_of=None, fiscal_year=None, messages=None, attachment_passages=None, current_attachment_ids=None, started_at=None):
+    def ask(self, thread_id, question, *, as_of=None, fiscal_year=None, messages=None, attachment_passages=None, current_attachment_ids=None, started_at=None, token_budget=None):
         if self._closed:
             raise ValueError('Agent is closed.')
         if not isinstance(thread_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',thread_id):
@@ -316,6 +334,8 @@ class RegulatoryAgent:
             raise ValueError('Financial year must use YYYY-YY.')
         if as_of is not None:
             date.fromisoformat(as_of)
+        if token_budget is not None and (type(token_budget) is not int or token_budget < 1):
+            raise ValueError('Token budget must be a positive integer.')
         with self._lock:
             config = {'configurable':{'thread_id':thread_id}, 'recursion_limit':20}
             previous = self.graph.get_state(config).values or {}
@@ -328,7 +348,8 @@ class RegulatoryAgent:
                 history=history, messages=messages if messages is not None else previous.get('messages', history_messages(history)),
                 attachment_passages=attachment_passages if attachment_passages is not None else previous.get('attachment_passages', []),
                 current_attachment_ids=current_attachment_ids or [], plan={}, evidence=[], document_status=[], draft={}, feedback=[],
-                answer={}, status='running', revision=0, steps=0, tokens_charged=0,
+                answer={}, status='running', revision=0, steps=0, tokens_charged=0, estimated_tokens=0,
+                token_budget=min(self.limits.token_budget, token_budget or self.limits.token_budget),
                 trace=[], seen_actions=[], started_at=started_at if started_at is not None else time.time(), route='planner')
             return self.graph.invoke(state, config)
 

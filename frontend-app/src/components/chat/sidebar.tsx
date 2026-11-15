@@ -73,7 +73,14 @@ export function Sidebar({
                 title={chat.title}
               >
                 <MessageSquare size={15} />
-                <span>{chat.title}</span>
+                <span>
+                  {chat.title}
+                  <small className="history-token-count">
+                    {chat.tokensCharged == null
+                      ? "Historical usage unavailable"
+                      : `${chat.tokensCharged.toLocaleString()} tokens${chat.estimatedTokens ? " · includes estimates" : ""}`}
+                  </small>
+                </span>
               </button>
               <button
                 className="delete-chat icon-button"
@@ -107,7 +114,10 @@ export function Sidebar({
           <span className="status-dot" />
           Saved on the server
         </div>
-        <p>Chat history is stored on the server. Review sources in assistant replies.</p>
+        <p>
+          Chat history is stored on the server. Review sources in assistant
+          replies.
+        </p>
         <div className="workspace-label">
           <span className="workspace-avatar">OC</span>
           <div>

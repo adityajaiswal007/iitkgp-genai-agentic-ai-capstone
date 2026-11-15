@@ -151,6 +151,9 @@ def test_qwen_adapter_executes_against_local_compatible_server(tmp_path,monkeypa
     from regulatory_agent.contracts import Plan, Draft, Critique, ContextResolution
     from regulatory_agent.models import DemoModel, ROLE_PROMPTS
 
+    # The local compatible server uses a fake model and no external downloads.
+    from regulatory_agent.models import QwenModel
+    monkeypatch.setattr(QwenModel, 'count_input_tokens', lambda *args: 1000)
     received = []
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -197,3 +200,14 @@ def test_qwen_adapter_executes_against_local_compatible_server(tmp_path,monkeypa
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_request_token_budget_is_enforced_and_validated(tmp_path):
+    with TestClient(create_app(settings(tmp_path))) as client:
+        response = client.post('/v1/executions', json={**request(), 'token_budget':1})
+        assert response.status_code == 200
+        assert response.json()['status'] == 'abstained'
+        assert response.json()['metrics']['tokens_charged'] == 0
+        assert response.json()['metrics']['estimated_tokens'] == 0
+        for value in [0, -1, True, '1000']:
+            assert client.post('/v1/executions', json={**request(), 'token_budget':value}).status_code == 422

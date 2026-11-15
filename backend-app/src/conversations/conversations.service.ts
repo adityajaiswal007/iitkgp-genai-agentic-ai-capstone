@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { UsageService } from '../usage/usage.service.js';
 import { DataSource, type EntityManager } from 'typeorm';
 import { Conversation } from '../database/conversation.entity.js';
 import { Attachment } from '../database/attachment.entity.js';
@@ -12,7 +13,10 @@ import {
   type ValidatedUpload,
 } from '../attachments/validate-uploads.js';
 import { Message } from '../database/message.entity.js';
-import { OrchestratorService } from '../orchestrator/orchestrator.service.js';
+import {
+  AgentBusyException,
+  OrchestratorService,
+} from '../orchestrator/orchestrator.service.js';
 import type {
   CreateConversationDto,
   ListConversationsDto,
@@ -38,6 +42,7 @@ export class ConversationsService {
   constructor(
     private readonly db: DataSource,
     private readonly orchestrator: OrchestratorService,
+    private readonly usage: UsageService,
   ) {}
 
   create(dto: CreateConversationDto) {
@@ -59,13 +64,28 @@ export class ConversationsService {
       .skip((query.page - 1) * query.pageSize)
       .take(query.pageSize)
       .getManyAndCount();
-    return paginated(data, count, query);
+    const usage = await this.usage.conversations(
+      data.map((conversation) => conversation.id),
+    );
+    return paginated(
+      data.map((conversation) =>
+        Object.assign(
+          conversation,
+          usage.get(conversation.id) ?? {
+            tokensCharged: null,
+            estimatedTokens: null,
+          },
+        ),
+      ),
+      count,
+      query,
+    );
   }
 
   async get(id: string, manager = this.db.manager) {
     const conversation = await manager.findOneBy(Conversation, { id });
     if (!conversation) throw new NotFoundException('Conversation not found');
-    return conversation;
+    return Object.assign(conversation, await this.usage.conversation(id, manager));
   }
 
   async rename(id: string, dto: RenameConversationDto) {
@@ -111,6 +131,7 @@ export class ConversationsService {
     id: string,
     dto: SendMessageDto,
     files: Express.Multer.File[] = [],
+    clientId: string,
   ) {
     const uploads = await validateUploads(files);
     if (!dto.content && !uploads.length)
@@ -183,65 +204,89 @@ export class ConversationsService {
         current: !(file instanceof Attachment),
       };
     });
-    const content = await this.orchestrator.reply(
-      id,
-      contentText,
-      filesForAgent,
-      history.map(({ role, content }) => ({ role, content })),
-    );
-    return this.db.transaction(async (manager) => {
-      const current = await this.lock(manager, id);
-      const duplicate = await this.replay(manager, current, dto, uploads);
-      if (duplicate) return duplicate;
-      this.checkVersion(current, dto.expectedVersion);
-      const last = await manager.findOne(Message, {
-        where: { conversationId: id },
-        order: { sequence: 'DESC' },
-      });
-      const next = (last?.sequence ?? -1) + 1;
-      const messages = await manager.save(Message, [
-        manager.create(Message, {
-          conversationId: id,
-          requestId: dto.requestId,
-          role: 'user',
-          content: contentText,
-          sequence: next,
-        }),
-        manager.create(Message, {
-          conversationId: id,
-          requestId: dto.requestId,
-          role: 'assistant',
-          content,
-          sequence: next + 1,
-        }),
-      ]);
-      if (uploads.length)
-        await manager.save(
-          Attachment,
-          uploads.map((upload) =>
-            manager.create(Attachment, {
-              ...upload,
-              messageId: messages[0].id,
-            }),
+    const allowance = await this.usage.reserve(clientId, id, dto.requestId);
+    let result;
+    try {
+      result = await this.orchestrator.reply(
+        id,
+        contentText,
+        filesForAgent,
+        history.map(({ role, content }) => ({ role, content })),
+        allowance,
+      );
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof AgentBusyException
+      )
+        await this.usage.release(id, dto.requestId);
+      else await this.usage.settle(id, dto.requestId);
+      throw error;
+    }
+    const content = result.content;
+    return this.db
+      .transaction(async (manager) => {
+        const current = await this.lock(manager, id);
+        const duplicate = await this.replay(manager, current, dto, uploads);
+        if (duplicate) return duplicate;
+        this.checkVersion(current, dto.expectedVersion);
+        const last = await manager.findOne(Message, {
+          where: { conversationId: id },
+          order: { sequence: 'DESC' },
+        });
+        const next = (last?.sequence ?? -1) + 1;
+        const messages = await manager.save(Message, [
+          manager.create(Message, {
+            conversationId: id,
+            requestId: dto.requestId,
+            role: 'user',
+            content: contentText,
+            sequence: next,
+          }),
+          manager.create(Message, {
+            conversationId: id,
+            requestId: dto.requestId,
+            role: 'assistant',
+            content,
+            sequence: next + 1,
+          }),
+        ]);
+        if (uploads.length)
+          await manager.save(
+            Attachment,
+            uploads.map((upload) =>
+              manager.create(Attachment, {
+                ...upload,
+                messageId: messages[0].id,
+              }),
+            ),
+          );
+        const savedMessages = await manager.find(Message, {
+          where: { conversationId: id, requestId: dto.requestId },
+          order: { sequence: 'ASC', attachments: { position: 'ASC' } },
+        });
+        if (current.version === 0 && current.title === 'New chat')
+          current.title = (
+            dto.content ||
+            uploads[0]?.name ||
+            'Attached files'
+          ).slice(0, 60);
+        current.version += 1;
+        await this.usage.settle(id, dto.requestId, result, manager);
+        return {
+          conversation: Object.assign(
+            await manager.save(current),
+            await this.usage.conversation(id, manager),
           ),
-        );
-      const savedMessages = await manager.find(Message, {
-        where: { conversationId: id, requestId: dto.requestId },
-        order: { sequence: 'ASC', attachments: { position: 'ASC' } },
+          messages: savedMessages,
+          mode: this.orchestrator.mode,
+        };
+      })
+      .catch(async (error: unknown) => {
+        // Inference spending survives a failure to persist the chat messages.
+        await this.usage.settle(id, dto.requestId, result);
+        throw error;
       });
-      if (current.version === 0 && current.title === 'New chat')
-        current.title = (
-          dto.content ||
-          uploads[0]?.name ||
-          'Attached files'
-        ).slice(0, 60);
-      current.version += 1;
-      return {
-        conversation: await manager.save(current),
-        messages: savedMessages,
-        mode: this.orchestrator.mode,
-      };
-    });
   }
 
   private async lock(manager: EntityManager, id: string) {

@@ -38,6 +38,7 @@ class ExecutionRequest(BaseModel):
     as_of: date | None = None
     fiscal_year: str | None = Field(default=None, pattern=r'^\d{4}-\d{2}$')
     include_trace: bool = False
+    token_budget: int | None = Field(default=None, ge=1, le=2147483647)
     history: list[ConversationMessage] | None = Field(default=None, max_length=200)
 
     @field_validator('question')
@@ -79,6 +80,7 @@ class Answer(BaseModel):
 class Metrics(BaseModel):
     steps: int
     tokens_charged: int
+    estimated_tokens: int
     revisions: int
     latency_ms: float
 
@@ -236,7 +238,7 @@ def create_app(settings: Settings | None = None):
                 as_of=payload.as_of.isoformat() if payload.as_of else None,
                 fiscal_year=payload.fiscal_year,
                 messages=[m.model_dump() for m in payload.history] if payload.history is not None else None,
-                attachment_passages=uploads, current_attachment_ids=current_ids, started_at=started_at)
+                attachment_passages=uploads, current_attachment_ids=current_ids, started_at=started_at, token_budget=payload.token_budget)
             answer = Answer.model_validate(state['answer'])
             return ExecutionResponse(
                 execution_id=str(uuid.uuid4()), conversation_id=conversation_id,
@@ -244,6 +246,7 @@ def create_app(settings: Settings | None = None):
                 corpus='attachments' if state['plan'].get('authority')=='UPLOAD' else request.app.state.corpus,
                 answer=answer, answer_text=render_answer(answer),
                 metrics=Metrics(steps=state['steps'],tokens_charged=state['tokens_charged'],
+                                estimated_tokens=state['tokens_charged'] if request.app.state.settings.mode=='demo' else state['estimated_tokens'],
                                 revisions=state['revision'],latency_ms=round((time.monotonic()-started)*1000,2)),
                 trace=state['trace'] if payload.include_trace else None)
         finally:

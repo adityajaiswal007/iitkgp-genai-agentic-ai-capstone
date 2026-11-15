@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   Header,
+  Headers,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -25,6 +26,7 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { MAX_FILE_BYTES, MAX_FILES } from '../attachments/validate-uploads.js';
 import { ChatRateLimit } from '../rate-limit/rate-limit.module.js';
+import { UsageService } from '../usage/usage.service.js';
 import { ConversationsService } from './conversations.service.js';
 import {
   CreateConversationDto,
@@ -48,7 +50,16 @@ import {
 })
 @Controller('conversations')
 export class ConversationsController {
-  constructor(private readonly conversations: ConversationsService) {}
+  constructor(
+    private readonly conversations: ConversationsService,
+    private readonly usage: UsageService,
+  ) {}
+  @Get('usage/daily')
+  @Header('Cache-Control', 'private, no-store')
+  @ApiOperation({ summary: 'Get daily token allowance for this browser' })
+  daily(@Headers('x-client-id') clientId: string) {
+    return this.usage.daily(clientId.toLowerCase());
+  }
   @Post()
   @ApiOperation({ summary: 'Create a conversation' })
   create(@Body() body: CreateConversationDto) {
@@ -146,8 +157,9 @@ export class ConversationsController {
   send(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: SendMessageDto,
+    @Headers('x-client-id') clientId: string,
     @UploadedFiles() files: Express.Multer.File[] = [],
   ) {
-    return this.conversations.send(id, body, files);
+    return this.conversations.send(id, body, files, clientId.toLowerCase());
   }
 }

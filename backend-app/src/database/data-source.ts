@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { AddTokenBudgets1794000000000 } from './migrations/1794000000000-add-token-budgets.js';
 import 'dotenv/config';
 import { DataSource, type DataSourceOptions } from 'typeorm';
 import { validateEnvironment } from '../config/environment.js';
@@ -19,7 +20,11 @@ export function databaseOptions(env = process.env): DataSourceOptions {
     database: config.DB_NAME,
     ssl: config.DB_SSL ? { rejectUnauthorized: true } : false,
     entities: [Conversation, Message, Attachment],
-    migrations: [CreateChatTables1793817600000, AddAttachments1793894400000],
+    migrations: [
+      CreateChatTables1793817600000,
+      AddAttachments1793894400000,
+      AddTokenBudgets1794000000000,
+    ],
     synchronize: false,
     migrationsRun: false,
     logging: false,

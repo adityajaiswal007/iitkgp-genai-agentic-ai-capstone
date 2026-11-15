@@ -18,6 +18,9 @@ export type AgentAttachment = {
   current?: boolean;
 };
 
+// The agent explicitly rejected the request before starting inference.
+export class AgentBusyException extends ServiceUnavailableException {}
+
 @Injectable()
 export class OrchestratorService {
   // The inference mode is owned by the separate agent service.
@@ -29,7 +32,12 @@ export class OrchestratorService {
     content: string,
     attachments: AgentAttachment[] = [],
     history: ConversationMessage[] = [],
-  ): Promise<string> {
+    tokenBudget?: number,
+  ): Promise<{
+    content: string;
+    tokensCharged: number;
+    estimatedTokens: number;
+  }> {
     const baseUrl = this.config
       .get<string>('AGENT_BASE_URL', 'http://127.0.0.1:8000')
       .replace(/\/$/, '');
@@ -38,6 +46,7 @@ export class OrchestratorService {
       conversation_id: conversationId,
       question: content,
       history,
+      ...(tokenBudget === undefined ? {} : { token_budget: tokenBudget }),
     };
     if (
       Buffer.byteLength(JSON.stringify(metadata), 'utf8') > 65536 ||
@@ -89,16 +98,18 @@ export class OrchestratorService {
         'Agent service is unavailable or timed out.',
       );
     }
-    if ([409, 429, 503].includes(response.status))
+    if (response.status === 409)
+      throw new AgentBusyException('Agent service is busy. Retry shortly.');
+    if ([429, 503].includes(response.status))
       throw new ServiceUnavailableException(
         'Agent service is busy. Retry shortly.',
       );
-    if (attachments.length && [413, 422].includes(response.status)) {
+    if ([413, 422].includes(response.status)) {
       const detail = (await response.json().catch(() => null)) as {
         error?: { message?: string };
       } | null;
       throw new BadRequestException(
-        detail?.error?.message ?? 'The attachment could not be processed.',
+        detail?.error?.message ?? 'The request could not be processed.',
       );
     }
     if (!response.ok) throw new BadGatewayException('Agent execution failed.');
@@ -120,6 +131,23 @@ export class OrchestratorService {
       throw new BadGatewayException('Invalid agent response.');
     const label =
       result.mode === 'demo' ? 'Demo inference (agent service).\n\n' : '';
-    return label + result.answer_text;
+    const metrics = 'metrics' in result ? result.metrics : null;
+    if (
+      !metrics ||
+      typeof metrics !== 'object' ||
+      !('tokens_charged' in metrics) ||
+      !Number.isSafeInteger(metrics.tokens_charged) ||
+      Number(metrics.tokens_charged) < 0 ||
+      !('estimated_tokens' in metrics) ||
+      !Number.isSafeInteger(metrics.estimated_tokens) ||
+      Number(metrics.estimated_tokens) < 0 ||
+      Number(metrics.estimated_tokens) > Number(metrics.tokens_charged)
+    )
+      throw new BadGatewayException('Invalid agent usage response.');
+    return {
+      content: label + result.answer_text,
+      tokensCharged: Number(metrics.tokens_charged),
+      estimatedTokens: Number(metrics.estimated_tokens),
+    };
   }
 }

@@ -14,8 +14,14 @@ const agentRequests: {
 }[] = [];
 const ids: string[] = [];
 let clientId = randomUUID();
+let agentDelayMs = 0;
+let invalidUsage = false;
+let agentBusy = false;
 beforeEach(() => {
   clientId = randomUUID();
+  agentDelayMs = 0;
+  invalidUsage = false;
+  agentBusy = false;
 });
 function api() {
   return request.agent(app.getHttpServer()).set('X-Client-ID', clientId);
@@ -45,11 +51,18 @@ beforeAll(async () => {
     let body = '';
     for await (const chunk of req) body += chunk;
     agentRequests.push(JSON.parse(body));
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (agentDelayMs)
+      await new Promise((resolve) => setTimeout(resolve, agentDelayMs));
+    res.writeHead(agentBusy ? 409 : 200, {
+      'Content-Type': 'application/json',
+    });
     res.end(
       JSON.stringify({
         mode: 'qwen',
         answer_text: 'Evidence-backed answer [test:1]',
+        metrics: invalidUsage
+          ? null
+          : { tokens_charged: 300, estimated_tokens: 0 },
       }),
     );
   });
@@ -437,4 +450,142 @@ describe('attachments', () => {
       .get(`/api/conversations/${conversation.id}/attachments/${fileId}`)
       .expect(404);
   });
+});
+
+it('shares daily tokens across chats, replays without charging, and does not refund deletion', async () => {
+  const create = async () => {
+    const response = await api()
+      .post('/api/conversations')
+      .send({ title: 'Budget test' })
+      .expect(201);
+    ids.push(response.body.id);
+    return response.body.id as string;
+  };
+  const first = await create();
+  const second = await create();
+  const turn = {
+    content: 'Budget question',
+    expectedVersion: 0,
+    requestId: randomUUID(),
+  };
+  await api()
+    .post(`/api/conversations/${first}/messages`)
+    .send(turn)
+    .expect(201);
+  await api()
+    .post(`/api/conversations/${first}/messages`)
+    .send(turn)
+    .expect(201);
+  await api()
+    .post(`/api/conversations/${second}/messages`)
+    .send({ ...turn, requestId: randomUUID() })
+    .expect(201);
+  const usage = await api().get('/api/conversations/usage/daily').expect(200);
+  expect(usage.body).toMatchObject({
+    used: 600,
+    remaining: 9400,
+    limit: 10000,
+  });
+  const chat = await api().get(`/api/conversations/${first}`).expect(200);
+  expect(chat.body.tokensCharged).toBe(300);
+  await api().delete(`/api/conversations/${first}`).expect(204);
+  expect((await api().get('/api/conversations/usage/daily')).body.used).toBe(
+    600,
+  );
+});
+
+async function budgetChat() {
+  const response = await api()
+    .post('/api/conversations')
+    .send({ title: 'Daily cap' })
+    .expect(201);
+  ids.push(response.body.id);
+  return response.body.id as string;
+}
+
+it('rejects requests at the daily cap before inference and resets on the next day', async () => {
+  const id = await budgetChat();
+  const db = app.get(DataSource);
+  const current = (await api().get('/api/conversations/usage/daily')).body;
+  await db.query(
+    `INSERT INTO token_executions (client_id,conversation_id,request_id,budget_day,charged,estimated,status) VALUES ($1,$2,$3,$4,10000,0,'settled')`,
+    [clientId, id, randomUUID(), current.day],
+  );
+  const count = agentRequests.length;
+  const turn = {
+    content: 'Question',
+    expectedVersion: 0,
+    requestId: randomUUID(),
+  };
+  const blocked = await api()
+    .post(`/api/conversations/${id}/messages`)
+    .send(turn)
+    .expect(429);
+  expect(blocked.body.error.code).toBe('TOKEN_BUDGET_EXCEEDED');
+  expect(agentRequests).toHaveLength(count);
+  await db.query(
+    `UPDATE token_executions SET budget_day=budget_day-1 WHERE client_id=$1`,
+    [clientId],
+  );
+  expect(
+    (await api().get('/api/conversations/usage/daily')).body.remaining,
+  ).toBe(10000);
+  await api().post(`/api/conversations/${id}/messages`).send(turn).expect(201);
+  expect((await api().get('/api/conversations/usage/daily')).body.used).toBe(
+    300,
+  );
+  expect((await api().get(`/api/conversations/${id}`)).body.tokensCharged).toBe(
+    10300,
+  );
+});
+
+it('reserves allowance atomically across simultaneous conversations', async () => {
+  const first = await budgetChat();
+  const second = await budgetChat();
+  agentDelayMs = 200;
+  const before = agentRequests.length;
+  const replies = await Promise.all(
+    [first, second].map((id) =>
+      api()
+        .post(`/api/conversations/${id}/messages`)
+        .send({
+          content: 'Question',
+          expectedVersion: 0,
+          requestId: randomUUID(),
+        }),
+    ),
+  );
+  expect(replies.map((reply) => reply.status).sort((a, b) => a - b)).toEqual([201, 429]);
+  expect(agentRequests.length - before).toBe(1);
+  expect((await api().get('/api/conversations/usage/daily')).body.used).toBe(
+    300,
+  );
+});
+
+it('retains a conservative charge when provider usage is unknown', async () => {
+  const id = await budgetChat();
+  invalidUsage = true;
+  await api()
+    .post(`/api/conversations/${id}/messages`)
+    .send({ content: 'Question', expectedVersion: 0, requestId: randomUUID() })
+    .expect(502);
+  expect(
+    (await api().get('/api/conversations/usage/daily')).body,
+  ).toMatchObject({ used: 10000, estimated: 10000, remaining: 0 });
+});
+
+it('releases allowance when the agent rejects work before starting inference', async () => {
+  const id = await budgetChat();
+  agentBusy = true;
+  const turn = {
+    content: 'Question',
+    expectedVersion: 0,
+    requestId: randomUUID(),
+  };
+  await api().post(`/api/conversations/${id}/messages`).send(turn).expect(503);
+  expect(
+    (await api().get('/api/conversations/usage/daily')).body,
+  ).toMatchObject({ used: 0, remaining: 10000 });
+  agentBusy = false;
+  await api().post(`/api/conversations/${id}/messages`).send(turn).expect(201);
 });

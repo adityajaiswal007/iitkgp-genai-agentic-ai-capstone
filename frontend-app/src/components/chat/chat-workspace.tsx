@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useRef, useState } from "react";
+import { useDailyUsage } from "./use-daily-usage";
 import { Composer } from "./composer";
 import { MessageList } from "./message-list";
 import { Sidebar } from "./sidebar";
@@ -48,6 +49,8 @@ const starters = [
 
 export function ChatWorkspace() {
   const chat = useConversations();
+  const { usage, error: usageError } = useDailyUsage(chat.busy, chat.activeId);
+  const budgetExhausted = usage?.remaining === 0;
   const [collapsed, setCollapsed] = useState(false);
   const mobileSidebar = useRef<HTMLDialogElement>(null);
   const about = useRef<HTMLDialogElement>(null);
@@ -184,7 +187,7 @@ export function ChatWorkspace() {
                   <button
                     key={title}
                     className="starter"
-                    disabled={!chat.ready || chat.busy}
+                    disabled={!chat.ready || chat.busy || budgetExhausted}
                     onClick={() => void chat.send(prompt)}
                   >
                     <Icon size={19} strokeWidth={1.6} />
@@ -204,6 +207,41 @@ export function ChatWorkspace() {
             </div>
           )}
           <div className="composer-area">
+            <div className="token-usage" role="status" aria-live="polite">
+              {chat.active && (
+                <span>
+                  Conversation:{" "}
+                  {chat.active.tokensCharged == null
+                    ? "Historical usage unavailable"
+                    : `${chat.active.tokensCharged.toLocaleString()} tokens${chat.active.estimatedTokens ? " (includes estimates)" : ""}`}
+                </span>
+              )}
+              {usage ? (
+                <>
+                  <span>
+                    Today: {usage.used.toLocaleString()} /{" "}
+                    {usage.limit.toLocaleString()} tokens ·{" "}
+                    {usage.remaining.toLocaleString()} remaining
+                  </span>
+                  <small>
+                    Resets at midnight ({usage.timezone}).{" "}
+                    {usage.estimated > 0
+                      ? "Includes reserved or estimated tokens. "
+                      : ""}
+                    Allowance applies to this browser.
+                  </small>
+                  {usage.remaining <= usage.limit * 0.2 && (
+                    <strong>
+                      {budgetExhausted
+                        ? "Daily token allowance reached. Come back after the reset."
+                        : "Your daily token allowance is running low."}
+                    </strong>
+                  )}
+                </>
+              ) : (
+                <span>{usageError || "Loading daily token allowance…"}</span>
+              )}
+            </div>
             {chat.notice && (
               <p className="inline-notice" role="status">
                 {chat.notice}
@@ -220,7 +258,7 @@ export function ChatWorkspace() {
             <Composer
               key={chat.activeId ?? "new"}
               busy={chat.busy}
-              ready={chat.ready}
+              ready={chat.ready && !budgetExhausted}
               onSend={chat.send}
               onStop={chat.cancel}
             />

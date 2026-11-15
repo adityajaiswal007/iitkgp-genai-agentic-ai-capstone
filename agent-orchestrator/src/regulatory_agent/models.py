@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+from functools import lru_cache
 from .contracts import RetryableModelError, PermanentModelError
 
 ROLE_PROMPTS = {
@@ -138,6 +139,13 @@ class ScriptedModel(DemoModel):
                 return value if isinstance(value, str) else json.dumps(value), 100
         return super().complete(role, payload, schema, max_tokens, timeout)
 
+@lru_cache(maxsize=4)
+def load_tokenizer(name):
+    from transformers import AutoTokenizer
+    # Tokenizer data only; never execute model repository code or load weights.
+    return AutoTokenizer.from_pretrained(name, trust_remote_code=False)
+
+
 class QwenModel:
     """OpenAI-compatible Qwen3 adapter. No SDK retries: orchestrator counts attempts."""
     def __init__(self, *, base_url=None, api_key=None, ca_cert=None, model=None):
@@ -145,6 +153,7 @@ class QwenModel:
         from pathlib import Path
         from openai import OpenAI, DefaultHttpxClient
         self.model = model or os.environ.get('QWEN_MODEL') or 'Qwen/Qwen3-8B'
+        self.tokenizer_name = os.environ.get('QWEN_TOKENIZER') or self.model
         base_url = base_url or os.environ.get('QWEN_BASE_URL', '')
         key = api_key or os.environ.get('QWEN_API_KEY', '')
         ca_cert = ca_cert if ca_cert is not None else os.environ.get('QWEN_CA_CERT', '')
@@ -177,6 +186,13 @@ class QwenModel:
             if 'http_client' in client_options:
                 client_options['http_client'].close()
             raise
+
+    def count_input_tokens(self, role, payload, schema):
+        tokenizer = load_tokenizer(self.tokenizer_name)
+        options = {'enable_thinking':False} if self.disable_thinking else {}
+        return len(tokenizer.apply_chat_template(
+            build_messages(role, payload, schema), tokenize=True,
+            add_generation_prompt=True, **options))
 
     def complete(self, role, payload, schema, max_tokens, timeout):
         from openai import APITimeoutError, APIConnectionError, APIStatusError

@@ -1051,3 +1051,16 @@ button.attachment-chip:hover {
 .attachment-chip > svg {
   flex-shrink: 0;
 }
+
+.token-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0 0 10px;
+  color: var(--text-secondary, #626660);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.token-usage small, .token-usage strong { flex-basis: 100%; }
+.token-usage strong { color: var(--text-primary, #292e28); }
+.history-token-count { display: block; margin-top: 3px; font-size: 10px; font-weight: 400; }

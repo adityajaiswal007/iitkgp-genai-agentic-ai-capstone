@@ -58,8 +58,21 @@ export function validateEnvironment(env: Record<string, unknown>) {
     agentTimeout > 600000
   )
     throw new Error('AGENT_REQUEST_TIMEOUT_MS must be between 1 and 600000');
+  const dailyLimit = Number(text('USER_DAILY_TOKEN_LIMIT', '10000'));
+  if (
+    !Number.isSafeInteger(dailyLimit) ||
+    dailyLimit < 1 ||
+    dailyLimit > 2147483647
+  )
+    throw new Error(
+      'USER_DAILY_TOKEN_LIMIT must be a positive integer up to 2147483647',
+    );
+  const budgetTimezone = text('TOKEN_BUDGET_TIMEZONE', 'Asia/Kolkata');
+  new Intl.DateTimeFormat('en-US', { timeZone: budgetTimezone }).format();
   return {
     ...env,
+    USER_DAILY_TOKEN_LIMIT: dailyLimit,
+    TOKEN_BUDGET_TIMEZONE: budgetTimezone,
     ...rateLimitConfig(env),
     AGENT_BASE_URL: agentUrl,
     AGENT_REQUEST_TIMEOUT_MS: agentTimeout,
