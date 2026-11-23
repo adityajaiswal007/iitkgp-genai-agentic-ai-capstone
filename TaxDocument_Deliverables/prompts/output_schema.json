@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TaxCopilotAnswer",
+  "type": "object",
+  "required": ["decision", "answer", "citations", "regime", "refusal_code"],
+  "additionalProperties": false,
+  "properties": {
+    "decision": {"enum": ["answer", "clarify", "refuse", "correct_premise"]},
+    "answer": {"type": "string", "maxLength": 900},
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["doc", "page", "quote"],
+        "additionalProperties": false,
+        "properties": {
+          "doc": {"type": "string"},
+          "page": {"type": "integer", "minimum": 1},
+          "quote": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
+    "regime": {"enum": ["act2025_rules2026", "legacy_1961", "related_law", "not_applicable"]},
+    "refusal_code": {"enum": ["NONE", "OUT_OF_SCOPE_LAW", "NOT_IN_CORPUS", "PERSONAL_ADVICE", "EVASION", "PROMPT_INJECTION", "PII", "FALSE_PREMISE", "AMBIGUOUS"]}
+  }
+}

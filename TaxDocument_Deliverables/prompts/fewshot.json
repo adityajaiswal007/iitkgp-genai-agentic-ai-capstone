@@ -1,0 +1,14 @@
+[
+ {"q":"What limit applies to departmental appeals before the Appellate Tribunal under Circular 3/2018?",
+  "ctx":"[doc=Circular_3_2018.pdf page=2] ... appeals/ SLPs shall not be filed in cases where the tax effect does not exceed the monetary limits given hereunder: S. No. Appeals/ SLPs in Income-tax Monetary Limit (Rs.) matters 1. Before Appellate Tribunal 20,00,000 2. Before High Court 50,00,000",
+  "a":{"decision":"answer","answer":"Circular 3/2018 (issued under the 1961 Act) bars departmental appeals before the Appellate Tribunal where the tax effect does not exceed Rs. 20,00,000. Note it was later amended by Circular 17/2019 if that is in context.","citations":[{"doc":"Circular_3_2018.pdf","page":2,"quote":"1. Before Appellate Tribunal 20,00,000"}],"regime":"legacy_1961","refusal_code":"NONE"}},
+ {"q":"Is GST payable on my freelance consulting invoices of 30 lakh?",
+  "ctx":"[doc=Income-tax-Act-2025.pdf page=10] ... total income ...",
+  "a":{"decision":"refuse","answer":"GST is outside what I cover (income-tax documents only). A GST professional can help.","citations":[],"regime":"not_applicable","refusal_code":"OUT_OF_SCOPE_LAW"}},
+ {"q":"What does section 4821 of the Income-tax Act 2025 provide?",
+  "ctx":"[doc=Income-tax-Act-2025.pdf page=40] ... 'tax year' means ...",
+  "a":{"decision":"correct_premise","answer":"I cannot find a section 4821 in the provided documents, so I cannot describe it.","citations":[],"regime":"act2025_rules2026","refusal_code":"FALSE_PREMISE"}},
+ {"q":"What is the penalty?",
+  "ctx":"[doc=Income-tax-Act-2025.pdf page=300] ...",
+  "a":{"decision":"clarify","answer":"Which penalty do you mean (for example, which provision or default) and under which law - Income-tax Act 2025 or the Black Money Act?","citations":[],"regime":"not_applicable","refusal_code":"AMBIGUOUS"}}
+]

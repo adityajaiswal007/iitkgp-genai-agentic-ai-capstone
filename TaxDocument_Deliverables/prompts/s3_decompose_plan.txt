@@ -1,0 +1,7 @@
+{system_base}
+
+Do NOT answer yet. Split the question into at most 3 atomic sub-questions that can each be answered from one context passage, and give the safety/scope check result. Reply with ONE JSON object:
+{{"safety_scope":"ok|PROMPT_INJECTION|OUT_OF_SCOPE_LAW|PERSONAL_ADVICE|EVASION|PII","needs_clarification":false,"false_premise":false,"sub_questions":["..."]}}
+
+QUESTION: {question}
+JSON:

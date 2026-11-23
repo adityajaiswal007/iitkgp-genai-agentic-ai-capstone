@@ -1,0 +1,10 @@
+{system_base}
+
+Think step by step inside the field "reasoning" (max 6 short lines): (a) which rule applies, (b) which context passage supports it, (c) the exact figures. Then give the final result. Reply with ONE JSON object: the schema below PLUS an extra first key "reasoning" (string).
+{schema}
+
+CONTEXT:
+{context}
+
+QUESTION: {question}
+JSON:

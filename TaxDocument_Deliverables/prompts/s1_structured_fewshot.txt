@@ -1,0 +1,13 @@
+{system_base}
+
+Reply with ONE JSON object only, matching this schema (no markdown, no prose outside JSON):
+{schema}
+
+EXAMPLES
+{fewshot}
+
+CONTEXT:
+{context}
+
+QUESTION: {question}
+JSON:
