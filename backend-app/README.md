@@ -217,11 +217,17 @@ The attachment migration is applied automatically when the API container starts.
 
 ### Daily token budgets
 
-`USER_DAILY_TOKEN_LIMIT` defaults to `10000`; `TOKEN_BUDGET_TIMEZONE` defaults to
-`Asia/Kolkata`. The allowance resets at midnight in that timezone. Change these
-server environment variables and restart the backend to apply them. Existing
-spending remains counted against the new limit. Run `npm run db:migrate` before
-starting an updated backend.
+Set `USER_DAILY_TOKEN_LIMIT` and `TOKEN_BUDGET_TIMEZONE` in `backend-app/.env`.
+They default to `10000` and `Asia/Kolkata`. The allowance resets at midnight
+in the configured timezone. Existing spending counts against the new limit.
+
+For Docker, recreate the API from the Compose directory used to launch the stack:
+
+```sh
+docker compose --profile app up -d --no-deps --force-recreate --wait api
+```
+
+For host development, restart the backend after editing its environment.
 
 `GET /api/conversations/usage/daily` returns `{ day, timezone, limit, used,
 estimated, remaining }` for the browser's `X-Client-ID`. Conversation list, detail,
