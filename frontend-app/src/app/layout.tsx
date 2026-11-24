@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Operations Copilot",
+  title: "RBI/SEBI Copilot",
   description:
     "A focused workspace for conversations, research, and everyday operations.",
 };

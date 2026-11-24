@@ -160,7 +160,7 @@ test("new chat clears the selection and stays new after refresh", async ({
   expect(new URL(page.url()).hash).toBe("#chat");
   await page.reload();
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toBeEnabled();
   await expect(activeChat(page)).toHaveCount(0);
   await expect(page.locator(".assistant-message")).toHaveCount(0);
@@ -173,7 +173,7 @@ test("new conversation gets its URL before inference finishes", async ({
   await page.goto("/");
   await page.getByRole("button", { name: "Start a new conversation" }).click();
   await page
-    .getByRole("textbox", { name: "Message Operations Copilot" })
+    .getByRole("textbox", { name: "Message RBI/SEBI Copilot" })
     .fill("Start a saved chat");
   const sent = page.waitForRequest(
     (request) =>
@@ -220,7 +220,7 @@ test("missing and deleted chats clear the URL without opening another chat", asy
   await expect.poll(() => selectedId(page)).toBeNull();
   await page.reload();
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toBeEnabled();
 });
 

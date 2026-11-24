@@ -9,14 +9,14 @@ def test_http_adapter_preserves_tools_and_query():
     def handler(request):
         seen.append(request)
         if request.url.path.endswith('search_documents'):
-            return httpx.Response(200, json={'hits':[{'document_id':'OP-204','score':0.8}]})
+            return httpx.Response(200, json={'hits':[{'document_id':'RBI-COMPLAINT','score':0.8}]})
         return httpx.Response(200, json={'passages':[]})
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         tools = HttpCorpusTools('http://localhost:8001', api_key='test', client=client)
-        assert tools.search_documents(SearchArgs(query='Valve-B', authority='AVL'))['hits'][0]['document_id'] == 'OP-204'
-        tools.fetch_passages(FetchArgs(document_ids=['OP-204'], query='Valve-B'))
+        assert tools.search_documents(SearchArgs(query='complaint reference', authority='RBI'))['hits'][0]['document_id'] == 'RBI-COMPLAINT'
+        tools.fetch_passages(FetchArgs(document_ids=['RBI-COMPLAINT'], query='complaint reference'))
     assert seen[0].headers['X-API-Key'] == 'test'
-    assert b'Valve-B' in seen[1].content
+    assert b'complaint reference' in seen[1].content
 
 
 @pytest.mark.parametrize('status,exception', [(404,KeyError),(429,ConnectionError),(503,ConnectionError),(401,RuntimeError)])
@@ -24,17 +24,18 @@ def test_http_error_mapping(status, exception):
     with httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(status))) as client:
         tools = HttpCorpusTools('http://localhost:8001', client=client)
         with pytest.raises(exception):
-            tools.fetch_passages(FetchArgs(document_ids=['OP-204']))
+            tools.fetch_passages(FetchArgs(document_ids=['RBI-COMPLAINT']))
 
 
-@pytest.mark.parametrize('question,document_id,citation,text', [
-    ('What is AVL Valve-B pressure?', 'BOM-FLT-H2NEX', 'valve:1', 'Maximum operating pressure: 2,800 psi'),
-    ('share the Regional Operational Leadership Assignments', 'RGM-2026-PDF', 'rgm:page1',
-     'Regional Operational Leadership Assignments: Americas — Sarah Jenkins; EMEA — Marcus Vance; APAC — Kenji Sato.'),
-    ('Who are the regional compliance officers?', 'RGM-2026-PDF', 'rgm:page2',
-     'Regional Compliance Officer Roster: Americas — Patricia Gomez; EMEA — Dr. Klaus Richter; APAC — Aisha Al-Rashid.'),
+@pytest.mark.parametrize('authority,question,document_id,citation,text', [
+    ('RBI', 'What is the RBI demo complaint procedure?', 'RBI-COMPLAINT', 'complaint:1',
+     'In this synthetic example, record the complaint reference.'),
+    ('SEBI', 'What is the SEBI demo grievance procedure?', 'SEBI-GRIEVANCE', 'grievance:1',
+     'In this synthetic example, keep the grievance reference and consult the intermediary.'),
+    ('SEBI', 'What is the SEBI demo disclosure interval?', 'SEBI-DISCLOSURE', 'disclosure:1',
+     'In this synthetic example, retain the acknowledgment for 2,800 days.'),
 ])
-def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path, question, document_id, citation, text):
+def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path, authority, question, document_id, citation, text):
     import json
     from unittest.mock import patch
     from fastapi.testclient import TestClient
@@ -46,13 +47,13 @@ def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path, quest
         payload = json.loads(request.content)
         paths.append(name)
         if name == 'search_documents':
-            assert payload['authority'] == 'AVL'
+            assert payload['authority'] == authority
             data = {'hits':[{'document_id':document_id,'score':1.0}]}
         elif name == 'fetch_passages':
             assert payload['query'] == question
-            data = {'passages':[{'citation_id':citation,'document_id':document_id,'authority':'AVL',
+            data = {'passages':[{'citation_id':citation,'document_id':document_id,'authority':authority,
                     'title':'Corpus document','text':text,
-                    'page':1,'section':'Test section','source_url':'urn:avl:'+document_id,'corpus_snapshot':'test'}]}
+                    'page':1,'section':'Test section','source_url':'urn:regulatory:'+document_id,'corpus_snapshot':'test'}]}
         else:
             assert 'query' not in payload
             data = {'documents':[{'document_id':document_id,'status':'applicable','reason':'Catalog interval.'}]}

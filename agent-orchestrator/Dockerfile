@@ -14,17 +14,11 @@ RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-ARG QWEN_TOKENIZER_MODEL=Qwen/Qwen3-8B
-ENV QWEN_TOKENIZER=/opt/qwen-tokenizer \
-    HF_HUB_DISABLE_XET=1
 RUN python -m pip install . \
     && python -m pip check \
     && useradd --create-home --uid 1000 agent \
     && mkdir -p /data /workspace \
     && chown agent:agent /data /workspace
-RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
-    if [ -s /run/secrets/build_ca_bundle ]; then export REQUESTS_CA_BUNDLE=/run/secrets/build_ca_bundle; fi \
-    && python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('${QWEN_TOKENIZER_MODEL}', trust_remote_code=False).save_pretrained('/opt/qwen-tokenizer')"
 
 FROM base AS test
 COPY tests/ ./tests/
@@ -42,8 +36,8 @@ RUN python validate_notebook.py
 EXPOSE 8888
 CMD ["python", "-m", "jupyterlab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--ServerApp.root_dir=/workspace"]
 
-# Default: API image. Copying the marker requires the offline test stage to pass.
-FROM base AS api
+# Demo API image. Copying the marker requires the offline test stage to pass.
+FROM base AS api-demo
 COPY --from=test /tmp/tests-passed /tmp/tests-passed
 ENV AGENT_DATABASE_PATH=/data/conversations.sqlite
 USER agent
@@ -51,3 +45,16 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
 CMD ["python", "-m", "uvicorn", "regulatory_agent.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+
+# Only the Qwen API build uses Hugging Face. Keep its downloader separate from the runtime.
+FROM base AS qwen-tokenizer
+ARG QWEN_TOKENIZER_MODEL=Qwen/Qwen3-8B
+ENV HF_HUB_DISABLE_XET=1
+RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
+    if [ -s /run/secrets/build_ca_bundle ]; then export REQUESTS_CA_BUNDLE=/run/secrets/build_ca_bundle; fi \
+    && python -c "import os; from transformers import AutoTokenizer; AutoTokenizer.from_pretrained(os.environ['QWEN_TOKENIZER_MODEL'], trust_remote_code=False).save_pretrained('/opt/qwen-tokenizer')"
+
+# Default for a plain docker build. Compose demo selects the api-demo target.
+FROM api-demo AS api-qwen
+COPY --from=qwen-tokenizer /opt/qwen-tokenizer /opt/qwen-tokenizer
+ENV QWEN_TOKENIZER=/opt/qwen-tokenizer

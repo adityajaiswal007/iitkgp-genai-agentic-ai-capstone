@@ -34,14 +34,14 @@ test("send, reload, switch, and delete a conversation", async ({ page }) => {
     page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeDisabled();
   await page
-    .getByRole("textbox", { name: "Message Operations Copilot" })
+    .getByRole("textbox", { name: "Message RBI/SEBI Copilot" })
     .fill("Help me plan a vendor review");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(
     page.getByText("Assistant response", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toBeFocused();
   await page.reload();
   await expect(
@@ -76,7 +76,7 @@ test("mobile navigation and keyboard composition work", async ({ page }) => {
   ).toBeVisible();
   await page.keyboard.press("Escape");
   const input = page.getByRole("textbox", {
-    name: "Message Operations Copilot",
+    name: "Message RBI/SEBI Copilot",
   });
   await input.fill("Summarize a document");
   await input.press("Shift+Enter");

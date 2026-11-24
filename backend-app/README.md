@@ -1,4 +1,4 @@
-# Operations Copilot backend
+# RBI/SEBI Copilot backend
 
 NestJS 12 / TypeScript orchestrator API with PostgreSQL 17, Redis-backed browser rate limits, TypeORM migrations, Swagger, request validation, and a separate orchestration module. The Next.js frontend in `../frontend-app` now saves and retrieves conversations through this API.
 

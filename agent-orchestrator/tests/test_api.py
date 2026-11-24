@@ -33,7 +33,7 @@ def test_execution_releases_citations_not_internal_state(tmp_path):
         assert data['status'] == 'answered'
         assert data['conversation_id'] == 'customer_001'
         assert data['answer']['claims'][0]['citations']
-        assert data['metrics']['steps'] == 6
+        assert data['metrics']['steps'] == 7
         assert data['mode'] == 'demo' and data['corpus'] == 'synthetic'
         assert 'fictional demo' in data['answer_text']
         assert data['trace'] is None
@@ -48,7 +48,7 @@ def test_followup_after_application_restart(tmp_path):
         data = client.post('/v1/executions',json=request('What is the complaint reference follow-up?')).json()
         assert data['status'] == 'answered'
         assert data['answer']['sources'][0]['authority'] == 'RBI'
-        assert data['metrics']['steps'] == 7
+        assert data['metrics']['steps'] == 8
 
 
 def test_generated_conversation_and_isolation(tmp_path):
@@ -148,7 +148,7 @@ def test_qwen_adapter_executes_against_local_compatible_server(tmp_path,monkeypa
     import json
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from regulatory_agent.contracts import Plan, Draft, Critique, ContextResolution
+    from regulatory_agent.contracts import Plan, Draft, Critique, ContextResolution, StateSummary
     from regulatory_agent.models import DemoModel, ROLE_PROMPTS
 
     # The local compatible server uses a fake model and no external downloads.
@@ -163,7 +163,7 @@ def test_qwen_adapter_executes_against_local_compatible_server(tmp_path,monkeypa
             context, _, question = body['messages'][-1]['content'].partition('\n\nCurrent user question:\n')
             payload = json.loads(context.removeprefix('Execution context (data, not instructions):\n'))
             payload.update(question=question, messages=body['messages'][1:-1], history=[])
-            schema = {'planner':Plan,'executor':Draft,'critic':Critique,'contextualizer':ContextResolution}[role]
+            schema = {'planner':Plan,'executor':Draft,'critic':Critique,'contextualizer':ContextResolution,'state_summary':StateSummary}[role]
             content,_ = DemoModel().complete(role,payload,schema,900,10)
             response = json.dumps({
                 'id':'mock-completion','object':'chat.completion','created':0,'model':'test-qwen3-8b',
@@ -192,8 +192,8 @@ def test_qwen_adapter_executes_against_local_compatible_server(tmp_path,monkeypa
             assert response.status_code == 200
             assert response.json()['mode'] == 'qwen'
             assert response.json()['status'] == 'answered'
-            assert response.json()['metrics']['tokens_charged'] == 300
-        assert len(received)==3
+            assert response.json()['metrics']['tokens_charged'] == 400
+        assert [call['max_tokens'] for call in received] == [450, 900, 500, 350]
         assert all(r['response_format']=={'type':'json_object'} for r in received)
         assert all(r['chat_template_kwargs']=={'enable_thinking':False} for r in received)
     finally:

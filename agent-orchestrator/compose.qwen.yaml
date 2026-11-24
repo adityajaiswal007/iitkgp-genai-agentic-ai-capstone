@@ -2,6 +2,9 @@
 # The host path comes from .env; the client inside Docker uses the mounted path.
 services:
   agent:
+    image: regulatory-agent:api-qwen
+    build:
+      target: api-qwen
     environment:
       AGENT_MODE: qwen
       QWEN_CA_CERT: /agent-orchestrator/certificate/vm05-ca.crt

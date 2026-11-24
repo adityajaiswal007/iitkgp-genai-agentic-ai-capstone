@@ -37,7 +37,7 @@ export function configureApp(app: INestApplication) {
     SwaggerModule.createDocument(
       app,
       new DocumentBuilder()
-        .setTitle('Operations Copilot API')
+        .setTitle('RBI/SEBI Copilot API')
         .setDescription(
           'Local single-workspace conversation API backed by PostgreSQL. Queries are forwarded to the agent-orchestrator service.',
         )

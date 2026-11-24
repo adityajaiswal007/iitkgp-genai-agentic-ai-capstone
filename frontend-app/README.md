@@ -1,4 +1,4 @@
-# Operations Copilot frontend
+# RBI/SEBI Copilot frontend
 
 A ChatGPT-style workspace built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Lucide icons. Includes responsive navigation, searchable server-backed chat history, new/delete actions, agent replies, stop/copy controls, and keyboard composition.
 

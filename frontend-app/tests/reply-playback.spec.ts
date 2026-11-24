@@ -97,7 +97,7 @@ async function mockChatApi(page: Page, failReply = false) {
   await page.clock.install({ time: new Date("2026-11-04T12:00:00Z") });
   await page.goto("/");
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toBeEnabled();
   await page.clock.pauseAt(new Date("2026-11-04T12:01:00Z"));
   return { historyReads: () => historyReadsAfterSend };
@@ -105,7 +105,7 @@ async function mockChatApi(page: Page, failReply = false) {
 
 async function send(page: Page) {
   const input = page.getByRole("textbox", {
-    name: "Message Operations Copilot",
+    name: "Message RBI/SEBI Copilot",
   });
   await input.fill("Help me make a plan");
   await input.press("Enter");
@@ -120,7 +120,7 @@ test("waits one second, reveals chunks, and opens saved history without replayin
     "Help me make a plan",
   );
   await expect(
-    page.getByRole("status", { name: "Operations Copilot is typing" }),
+    page.getByRole("status", { name: "RBI/SEBI Copilot is typing" }),
   ).toBeVisible();
   await expect.poll(api.historyReads).toBeGreaterThan(0);
   await page.clock.runFor(999);
@@ -152,12 +152,12 @@ test("waits one second, reveals chunks, and opens saved history without replayin
     0,
   );
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toHaveValue("");
   await page.reload();
   await expect(content).toHaveText(replyText);
   await expect(
-    page.getByRole("status", { name: "Operations Copilot is typing" }),
+    page.getByRole("status", { name: "RBI/SEBI Copilot is typing" }),
   ).toHaveCount(0);
 });
 
@@ -203,10 +203,10 @@ test("a failed request removes typing and preserves the draft", async ({
   await send(page);
   await expect(page.getByText("Sample request failed.")).toBeVisible();
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toHaveValue("Help me make a plan");
   await expect(
-    page.getByRole("status", { name: "Operations Copilot is typing" }),
+    page.getByRole("status", { name: "RBI/SEBI Copilot is typing" }),
   ).toHaveCount(0);
   await expect(page.locator(".assistant-message")).toHaveCount(0);
 });

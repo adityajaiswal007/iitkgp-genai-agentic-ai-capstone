@@ -1,9 +1,9 @@
 services:
   agent:
-    image: regulatory-agent:api
+    image: regulatory-agent:api-${AGENT_MODE:-demo}
     build:
       context: .
-      target: api
+      target: api-${AGENT_MODE:-demo}
     ports:
       - "127.0.0.1:8000:8000"
     environment:

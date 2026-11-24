@@ -46,7 +46,7 @@ test("shows conversation usage, blocks exhausted budgets, and recovers after the
     page.getByText("Daily token allowance reached. Come back after the reset."),
   ).toBeVisible();
   const input = page.getByRole("textbox", {
-    name: "Message Operations Copilot",
+    name: "Message RBI/SEBI Copilot",
   });
   await expect(input).toBeDisabled();
   await expect(

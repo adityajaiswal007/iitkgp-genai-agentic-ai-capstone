@@ -39,7 +39,7 @@ export function Sidebar({
           <Sparkles size={19} />
         </span>
         <span>
-          Operations<span className="brand-secondary">Copilot</span>
+          RBI/SEBI{" "}<span className="brand-secondary">Copilot</span>
         </span>
       </div>
       <button className="new-chat-button" onClick={onNew}>
@@ -119,7 +119,7 @@ export function Sidebar({
           replies.
         </p>
         <div className="workspace-label">
-          <span className="workspace-avatar">OC</span>
+          <span className="workspace-avatar">RS</span>
           <div>
             Personal workspace<small>Local workspace</small>
           </div>

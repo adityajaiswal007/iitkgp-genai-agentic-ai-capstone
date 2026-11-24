@@ -41,7 +41,7 @@ function AssistantMessage({
         <span className="assistant-symbol">
           <Sparkles size={16} />
         </span>
-        <strong>Operations Copilot</strong>
+        <strong>RBI/SEBI Copilot</strong>
         <span className="demo-response-label">Assistant response</span>
       </div>
       <div className="message-content">
@@ -181,11 +181,11 @@ export function MessageList({
         <div
           className="thinking"
           role="status"
-          aria-label="Operations Copilot is typing"
+          aria-label="RBI/SEBI Copilot is typing"
         >
           <Sparkles size={16} />
           <span>
-            Copilot is typing
+            RBI/SEBI Copilot is typing
             <span className="thinking-dots" aria-hidden="true">
               <span />
               <span />

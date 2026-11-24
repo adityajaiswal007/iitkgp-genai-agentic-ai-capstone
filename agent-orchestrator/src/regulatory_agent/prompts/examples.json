@@ -1,0 +1,24 @@
+{
+  "planner": {
+    "input": {"question": "Synthetic example: Which regulator publishes the demo broker disclosure circular?"},
+    "output": {"action": "answer", "authority": "SEBI", "query": "broker disclosure circular", "alternative_queries": ["stockbroker disclosure requirements"], "assumptions": [], "tools": ["search_documents", "fetch_passages", "lookup_document_status"]}
+  },
+  "executor": {
+    "input": {
+      "question": "Synthetic example: What does the example broker disclose?",
+      "evidence": [{"citation_id": "S1", "document_id": "example", "authority": "SEBI", "text": "In this fictional example, the broker discloses the service fee."}],
+      "document_status": [{"document_id": "example", "status": "applicable"}]
+    },
+    "output": {"answer_status": "answered", "evidence_notes": ["S1: Example broker discloses the service fee."], "claims": [{"text": "In the fictional example, the broker discloses the service fee.", "kind": "rule", "citations": ["S1"]}], "limitations": []}
+  },
+  "critic": {
+    "input": {
+      "question": "Synthetic example: What does the example broker disclose?",
+      "evidence": [{"citation_id": "S1", "document_id": "example", "authority": "SEBI", "text": "In this fictional example, the broker discloses the service fee."}],
+      "document_status": [{"document_id": "example", "status": "applicable"}],
+      "draft": {"claims": [{"text": "The example broker discloses a service fee of 50 rupees.", "citations": ["S1"]}]},
+      "deterministic_issues": ["Claim 1 contains a number absent from its cited passages."]
+    },
+    "output": {"decision": "revise", "checks": {"relevance": "pass", "factual_support": "fail", "citation_support": "fail", "completeness": "pass", "applicability": "pass"}, "revise_target": "executor", "issues": ["Remove the unsupported amount."]}
+  }
+}

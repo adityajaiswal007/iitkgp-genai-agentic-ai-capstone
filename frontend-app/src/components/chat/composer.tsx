@@ -151,8 +151,8 @@ export function Composer({ busy, ready, onSend, onStop }: Props) {
       <textarea
         ref={input}
         autoFocus={ready}
-        aria-label="Message Operations Copilot"
-        placeholder="Message Operations Copilot…"
+        aria-label="Message RBI/SEBI Copilot"
+        placeholder="Message RBI/SEBI Copilot…"
         value={draft}
         maxLength={4000}
         rows={1}

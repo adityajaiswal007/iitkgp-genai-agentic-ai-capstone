@@ -17,7 +17,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-Authority = Literal['RBI', 'SEBI', 'INCOME_TAX', 'AVL', 'UPLOAD']
+Regulator = Literal['RBI', 'SEBI']
+Authority = Literal[Regulator, 'UPLOAD']
+PlanAuthority = Literal[Authority, 'BOTH']
+RefusalCategory = Literal['out_of_scope', 'personal_advice', 'action_request', 'personal_data', 'rule_evasion']
 ToolName = Literal['search_documents', 'fetch_passages', 'lookup_document_status']
 
 class Schema(BaseModel):
@@ -30,7 +33,10 @@ class ContextResolution(Schema):
 class Plan(Schema):
     action: Literal['answer', 'clarify', 'refuse']
     query: str = Field(default='', max_length=1500)
-    authority: Authority | None = None
+    authority: PlanAuthority | None = None
+    alternative_queries: list[Annotated[str, Field(min_length=1, max_length=1500)]] = Field(default_factory=list, max_length=2)
+    assumptions: list[Annotated[str, Field(max_length=180)]] = Field(default_factory=list, max_length=3)
+    refusal_category: RefusalCategory | None = None
     message: str = Field(default='', max_length=1000)
     tools: list[ToolName] = Field(default_factory=lambda: [
         'search_documents', 'fetch_passages', 'lookup_document_status'], max_length=3)
@@ -39,19 +45,49 @@ class Claim(Schema):
     text: str = Field(min_length=1, max_length=1500)
     citations: list[str] = Field(min_length=1, max_length=6)
 
+class DraftClaim(Claim):
+    kind: Literal['rule', 'condition', 'exception', 'deadline', 'amount', 'definition', 'procedure'] | None = None
+
+
 class Draft(Schema):
-    claims: list[Claim] = Field(default_factory=list, max_length=6)
+    answer_status: Literal['answered', 'partial', 'not_found'] = 'answered'
+    evidence_notes: list[Annotated[str, Field(max_length=180)]] = Field(default_factory=list, max_length=5)
+    claims: list[DraftClaim] = Field(default_factory=list, max_length=6)
     limitations: list[str] = Field(default_factory=list, max_length=6)
+
+class ReviewChecks(Schema):
+    relevance: Literal['pass', 'fail']
+    factual_support: Literal['pass', 'fail']
+    citation_support: Literal['pass', 'fail']
+    completeness: Literal['pass', 'fail']
+    applicability: Literal['pass', 'fail']
+
 
 class Critique(Schema):
     decision: Literal['accept', 'revise', 'clarify', 'insufficient_evidence']
-    issues: list[str] = Field(default_factory=list, max_length=8)
+    issues: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=8)
+    checks: ReviewChecks | None = None
+    revise_target: Literal['planner', 'executor'] | None = None
+    clarification_question: str = Field(default='', max_length=300)
+
+
+class StateSummary(Schema):
+    topic: str = Field(default='', max_length=120)
+    authority: Literal[Regulator, 'BOTH'] | None = None
+    entities: list[Annotated[str, Field(max_length=80)]] = Field(default_factory=list, max_length=5)
+    established_facts: list[Annotated[str, Field(max_length=140)]] = Field(default_factory=list, max_length=4)
+    open_points: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=3)
+
 
 class SearchArgs(Schema):
     query: str = Field(min_length=1, max_length=1500)
     authority: Authority
     limit: int = Field(default=3, ge=1, le=5)
     fiscal_year: str | None = None
+
+class CatalogSearchArgs(SearchArgs):
+    authority: Regulator
+
 
 class FetchArgs(Schema):
     document_ids: list[str] = Field(min_length=1, max_length=5)
@@ -87,6 +123,10 @@ class DocumentStatus(Schema):
     document_id: str
     status: Literal['applicable', 'not_applicable', 'unknown']
     reason: str
+    effective_from: str | None = None
+    effective_to: str | None = None
+    superseded_by: str | None = None
+
 
 class StatusData(Schema):
     documents: list[DocumentStatus] = Field(max_length=5)
@@ -118,18 +158,22 @@ class Limits:
 
 class AgentState(TypedDict):
     question: str
+    private_input: bool
     resolved_question: str
     as_of: str
     fiscal_year: str | None
     history: list[dict]
     messages: list[dict]
+    summary: dict
     attachment_passages: list[dict]
     current_attachment_ids: list[str]
     plan: dict
     evidence: list[dict]
     document_status: list[dict]
     draft: dict
+    private_output: bool
     feedback: list[str]
+    revise_target: Literal['planner', 'executor'] | None
     answer: dict
     status: str
     revision: int

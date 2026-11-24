@@ -1,23 +1,19 @@
 # Regulatory Agent — Python execution API and notebook
 
-The orchestrator sends search text and filters to the document-retrieval service.
-That service owns embeddings, vector search, and retrieval ranking.
+The orchestrator sends search text and filters to a document retrieval API. This project
+includes a local HTTP mock backed by synthetic documents.
 
 Python 3.11+ project with a FastAPI service for the Qwen3 planner → executor → critic workflow.
 The notebook remains a standalone teaching/demo artifact. The API imports normal Python modules;
 it never executes notebook cells.
 
-Scope includes AVL internal governance, regional leadership assignments, and compliance officer
-rosters alongside regulatory documents. These read-only questions do not need an explicit AVL
-prefix or financial year: the planner searches the AVL corpus before deciding evidence is absent.
-During revision, status is reused only for unchanged document IDs and corpus snapshots so the
-final critic still fits the ten-step limit. The local Qwen configuration allows 30 seconds per
-model/tool attempt within the existing 120-second query deadline; output remains capped at 900
-(the hosted endpoint accepts at most 1,024 output tokens).
+The assistant covers general RBI and SEBI regulatory questions. The mock corpus contains one
+fictional workflow for each regulator. RBI and SEBI questions about user-provided files can use
+conversation-scoped excerpts. Uploaded excerpts do not establish that a regulatory rule is current.
 
 **The supplied `.env.example` enables Qwen with local retrieval.** Without environment settings,
-the Python default remains offline `demo` with a synthetic corpus. Set `RAG_BASE_URL` to use the
-Track B retrieval service and its AVL policy corpus. Demo inference is a deterministic test double;
+the Python default remains offline `demo` with a synthetic corpus. Set `RAG_BASE_URL` to use the local mock or an external
+retrieval service. Demo inference is a deterministic test double;
 use Qwen mode for generated planner/executor/critic answers. A demo is not actual regulatory guidance.
 
 ## Conversation context
@@ -28,32 +24,42 @@ The backend supplies the complete committed PostgreSQL transcript on every turn,
 chats and lost/legacy agent checkpoints recover their context. Only user/assistant roles are
 accepted; no caller-supplied system instructions are allowed.
 
-The planner receives these as actual chat messages rather than a nested JSON history blob.
-For fresh uploads, drafting and review use the resolved question, current filenames and fresh
-evidence without prior assistant answers, which prevents old file values from anchoring the new
-answer. Follow-ups without new files continue to receive the ordered conversation context. Standalone API clients can omit history and reuse
-`conversation_id`; SQLite retains the complete compact transcript, including supplied history,
-across restarts. New answers are stored as valid JSON without retrieved passage bodies. The old
-six-turn, 1,500-character question and 2,000-character serialized-answer cuts are removed.
+The contextualizer uses the ordered transcript to resolve exact references. The planner uses a
+compact summary and recent turns when a corresponding checkpoint exists. The transcript supplies
+context when the checkpoint or summary is missing. A new question always retrieves fresh evidence.
+Draft and review calls for fresh uploads use the current question, filenames and evidence.
 
-History resolves people, topics, and pronouns; it is not trusted evidence for new facts.
-Before scope checking, a dedicated context step binds plural references to named people/entities
-from earlier assistant messages. Those bindings must actually occur in the transcript. The
-original latest request is preserved, and its attribute plus bound entities becomes the search
-query; this prevents a rewrite from losing "email" or narrowing a plural request to one person.
-Every new question retrieves and checks evidence again. The context step is charged to the
-existing model/token budget and ten-step limit; a normal follow-up uses seven attempts. The existing 64-KiB request limit,
-200-message API limit and model token budget still apply. Oversized backend transcripts receive
-an explicit context-limit error rather than being silently truncated. A model token-budget
-stop also reports a limitation; conversation storage in PostgreSQL is retained.
+SQLite stores the released transcript and a compact summary. The summary refresh is a metered,
+best-effort call after a verified answer. Common private identifiers are removed from model-bound
+content and summaries. This does not change the backend's transcript retention policy.
+
+## Prompt workflow
+
+The packaged templates in `src/regulatory_agent/prompts/` adapt the team's prompt engineering pack.
+Planner, executor and critic use synthetic examples and Pydantic schemas. The planner can propose
+up to two alternate queries for misses. An explicit RBI/SEBI comparison searches each catalog and
+fetches passages for both together. The executor and critic use short evidence labels such as
+`S1`. Released answers use the original retrieval citations.
+
+Code checks citations against the evidence shown to the model, including document applicability
+and numbers in cited passages. The critic must pass all five review checks. It can request a new
+draft from the same evidence or a targeted retrieval revision. Malformed model output can use one
+schema-only repair call. Each model/tool attempt and repair counts toward the existing limits.
 
 ## Start with Docker
 
-From this directory:
+Run the agent and mock retrieval in demo mode from this directory:
+
+```sh
+AGENT_MODE=demo docker compose -f compose.yaml -f compose.retrieval.yaml up --build
+```
+
+Both services use the `api-demo` build target, which runs the offline tests without downloading a
+Qwen tokenizer. For hosted Qwen, use the Qwen Compose override to build the `api-qwen` target:
 
 ```sh
 cp .env.example .env
-# Fill QWEN_API_KEY first. This starts retrieval and mounts the configured CA.
+# Fill QWEN_API_KEY first. This starts mock retrieval and mounts the configured CA.
 docker compose -f compose.yaml -f compose.retrieval.yaml -f compose.qwen.yaml up --build
 ```
 
@@ -69,7 +75,7 @@ now **the API on port 8000**, rather than Jupyter on 8888. Offline tests run dur
 Without Compose:
 
 ```sh
-docker build -t regulatory-agent:local .
+docker build --target api-qwen -t regulatory-agent:local .
 docker run --rm --name regulatory-agent -p 127.0.0.1:8000:8000 \
   --mount type=volume,src=regulatory-agent-data,dst=/data \
   --env-file .env -e AGENT_DATABASE_PATH=/data/conversations.sqlite regulatory-agent:local
@@ -107,7 +113,7 @@ The response includes:
     "sources": []
   },
   "answer_text": "Rendered answer with citations and limitations",
-  "metrics": {"steps": 6, "tokens_charged": 300, "revisions": 0, "latency_ms": 12.0},
+  "metrics": {"steps": 7, "tokens_charged": 400, "revisions": 0, "latency_ms": 12.0},
   "trace": []
 }
 ```
@@ -205,7 +211,8 @@ does not export its values into your terminal automatically. Never commit real k
 
 The adapter uses an OpenAI-compatible chat-completions endpoint. Confirm the selected model is
 ≤8B for Track B. Configure `QWEN_JSON_MODE=json_object` or `json_schema` only if your endpoint
-supports it. `QWEN_DISABLE_THINKING=1` passes the vLLM Qwen3 chat-template switch; use it only
+supports it. The planner, executor, critic and summary output caps are 450, 900, 500 and 350
+tokens respectively, further bounded by `AGENT_MAX_OUTPUT_TOKENS`. `QWEN_DISABLE_THINKING=1` passes the vLLM Qwen3 chat-template switch; use it only
 when supported. Otherwise configure thinking mode according to your provider. Qwen3 thinking
 can consume a small output budget before producing JSON; tune `AGENT_MAX_OUTPUT_TOKENS` and the
 overall token budget together. Unsupported capability settings produce a controlled failure;
@@ -237,11 +244,10 @@ python -m pytest -q
 python validate_notebook.py
 ```
 
-The package includes 28 orchestration regression tests plus API integration tests covering
+The package includes orchestration and API integration tests covering
 conversation persistence, schema validation, optional authentication, bounded request sizes,
 busy responses, sanitized errors, and the real Qwen SDK against a local mock HTTP endpoint.
-Tests never require real provider credentials or external inference calls. The notebook retains
-its separate 28-test offline suite. A live Qwen endpoint and real corpus still need evaluation.
+Tests never require real provider credentials or external inference calls. The notebook has a separate offline suite. A live Qwen endpoint and real corpus still need evaluation.
 
 Run the package tests in Docker:
 
@@ -277,8 +283,9 @@ via `RUN_LIVE=True` in section 9.
 - Repeating a POST creates another turn and may incur another model charge. `execution_id` is a result
   identifier, not an idempotency key. Do not automatically retry after an ambiguous timeout.
 - Per turn: at most 10 model/tool attempts, one revision, one retry/JSON repair per operation,
-  a deadline, and a token allowance. Initial planner + three tools + draft + critic costs six attempts.
-  A targeted one-tool revision costs four more. Larger replans stop safely at the cap.
+  a deadline, and a token allowance. Planner, three tools, draft and critic cost six attempts.
+  A successful turn can spend one more attempt on the summary. An executor-only revision costs
+  two attempts. A targeted planner revision costs at least four.
 - Token reservations use conservative serialized-input byte allowances plus output caps; they are not
   an exact Qwen tokenizer. Provider-reported usage replaces reservations; failed/no-usage calls retain
   the allowance. Shared team quotas need a durable atomic ledger and provider-side quota enforcement.
@@ -317,7 +324,7 @@ multi-tenant customer API.
 
 SQLite checkpoints contain input, evidence and internal drafts in local plaintext. Use synthetic
 or de-identified input here and add appropriate storage, retention and access controls before real
-customer use. New turns reset evidence/counters and retain the last six conversation turns. Older
+customer use. New turns reset evidence and counters. Older
 checkpoints may remain in SQLite. Automatic crash replay of in-flight paid calls is not implemented.
 
 ## References
@@ -328,27 +335,38 @@ checkpoints may remain in SQLite. Automatic crash replay of in-flight paid calls
 - [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/)
 
 
-## Connect the Track B retrieval service
+## Use the mock document retrieval API
 
-The sibling `../document-retrieval` project implements all three tool contracts. Start it on
-port 8001, then configure this service with:
+The Compose retrieval override starts a synthetic HTTP service on port 8001. It implements
+`search_documents`, `fetch_passages` and `lookup_document_status` with the orchestrator's existing
+request and response schemas. Its fixtures cover RBI and SEBI.
 
-```dotenv
-RAG_BASE_URL=http://127.0.0.1:8001
-RAG_API_KEY=matching-retrieval-service-key-if-set
+Run the agent and mock with demo inference from this directory:
+
+```sh
+AGENT_MODE=demo docker compose -f compose.yaml -f compose.retrieval.yaml up --build
 ```
 
-For Docker, run `docker compose -f compose.yaml -f compose.retrieval.yaml up --build`.
-Add `-f compose.qwen.yaml` with your existing Qwen configuration for generated answers.
-The retrieval override uses `http://retrieval:8001` inside Docker and waits for its health check.
-First startup downloads the CPU embedding and cross-encoder models; persistent weights and vector
-cache live in the `retrieval-data` volume. See the retrieval README for hosted embeddings configuration.
+Add `-f compose.qwen.yaml` and use your Qwen configuration for generated answers with the
+same synthetic corpus. Inside Docker the agent calls `http://retrieval:8001` and waits for
+`GET /health` to succeed.
+
+To start just the mock with the local Python environment:
+
+```sh
+python -m uvicorn regulatory_agent.mock_retrieval:app --host 127.0.0.1 --port 8001
+```
+
+Set the agent's `RAG_BASE_URL=http://127.0.0.1:8001` and try asking
+"What is the RBI demo complaint process?" If you set `RAG_API_KEY`, use the
+same value in both processes. To use an external retrieval service, set `RAG_BASE_URL` to its
+address and start the agent without the Compose retrieval override.
 
 `HttpCorpusTools` maps native HTTP timeouts, transport failures and 429/5xx responses to the existing
 orchestrator retry path, maps missing documents to `NOT_FOUND`, and leaves response-schema validation
 to `tool_attempt`. The adapter does not add retries. `fetch_passages` now accepts an optional `query`;
-the executor supplies it so selected evidence matches the search. All other tool names/response shapes
-are unchanged. `AVL` is an additional authority, without relabeling enterprise policies as RBI/SEBI/Tax.
+the executor supplies it so selected evidence matches the search. Catalog statuses may include
+explicit effective dates and supersession metadata.
 Execution and health responses report `corpus="retrieval"` when the remote service is configured.
 The standalone notebook retains its synthetic teaching fixtures.
 
@@ -374,7 +392,9 @@ archive expansion and image dimensions are bounded. Each file may contain up to 
 characters (500,000 combined) and PDFs up to 100 pages; the whole extraction phase is limited to 30 seconds and is
 part of the query deadline. OCR accuracy depends on the input quality.
 
-File passages use authority `UPLOAD`, deterministic content hashes and page/chunk citations.
+For RBI and SEBI questions, file excerpts use the provenance label `UPLOAD`, deterministic
+content hashes, and page/chunk citations. The orchestrator selects files with regulator identifiers
+in their extracted text or filenames.
 A conversation-scoped lexical search selects relevant excerpts (at most two chunks per selected
 file) for the same executor and critic checks as indexed evidence. Answers include attachment
 filenames. This is excerpt retrieval, not a guarantee that every part of a long file was read.
@@ -413,7 +433,7 @@ still blocked before inference.
 
 Host runs use `QWEN_TOKENIZER` (a Hugging Face model ID or local tokenizer
 directory), defaulting to `QWEN_MODEL`. Install the updated requirements first.
-The tokenizer must match the served model and its chat template. Docker bundles
+The tokenizer must match the served model and its chat template. The `api-qwen` image bundles
 Qwen3-8B tokenizer files at `/opt/qwen-tokenizer`, so runtime token counting
 requires neither model weights nor a Hugging Face connection. If serving a
 different tokenizer, build with `--build-arg QWEN_TOKENIZER_MODEL=<model-id>` or

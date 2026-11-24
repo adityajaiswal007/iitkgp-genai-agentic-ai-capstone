@@ -8,22 +8,17 @@ services:
       retrieval:
         condition: service_healthy
   retrieval:
-    build: ../document-retrieval
+    build:
+      context: .
+      target: api-demo
+    command: ["python", "-m", "uvicorn", "regulatory_agent.mock_retrieval:app", "--host", "0.0.0.0", "--port", "8001"]
     ports:
       - "127.0.0.1:8001:8001"
     environment:
       RAG_API_KEY: ${RAG_API_KEY:-}
-      RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-local}
-      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
-      RAG_EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-}
-      RAG_EMBEDDING_API_KEY: ${RAG_EMBEDDING_API_KEY:-}
-    volumes:
-      - retrieval-data:/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health',timeout=5)"]
-      interval: 15s
-      timeout: 6s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
       retries: 4
-      start_period: 300s
-volumes:
-  retrieval-data:
+      start_period: 5s

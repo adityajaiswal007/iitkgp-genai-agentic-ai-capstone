@@ -4,25 +4,18 @@ Capstone project for the **Executive Post Graduate Programme in Generative AI an
 
 ## Project overview
 
-The planned project is a **Logistics Operations RAG Assistant**. It explores how retrieval-augmented generation (RAG) can help users find answers grounded in organizational documents.
-
-The reference material covers logistics operations, supply chain, compliance, governance, finance, legal, and human resources policies.
-
-## Objectives
-
-- Retrieve relevant information from the provided organizational documents.
-- Generate answers grounded in the retrieved context.
-- Include source references so users can verify answers.
-- Evaluate retrieval quality and answer accuracy.
+RegAssist answers read-only questions about RBI and SEBI regulations using cited passages.
+The repository includes a synthetic retrieval API for local development and an HTTP adapter
+for connecting an external RBI/SEBI corpus.
 
 ## Applications and query flow
 
 `frontend-app` (Next.js, port 3000) → `backend-app` (NestJS, port 3001) →
-`agent-orchestrator` (FastAPI, port 8000) → `document-retrieval` (FastAPI, port 8001)
+`agent-orchestrator` (FastAPI, port 8000) → a retrieval API (local mock on port 8001)
 and the hosted Qwen model. PostgreSQL on port 5433 stores the UI conversations and attachments;
 the agent owns its reasoning state in SQLite using the same conversation ID. Each query also
-carries the complete committed PostgreSQL transcript, which Qwen receives as ordered
-user/assistant messages. This recovers old chats even if the agent checkpoint is missing.
+carries the complete committed PostgreSQL transcript. The agent uses that history to recover prior
+context when its checkpoint or compact summary is missing.
 Context exceeding the API/model budget produces an explicit error/limitation rather than a
 silent history cut.
 
@@ -30,7 +23,8 @@ The backend calls `POST /v1/executions` and saves its `answer_text`, including c
 There is no sample-answer fallback when the agent is unavailable. HTTP 502/503 reaches the UI.
 The backend response mode `agent` identifies the service boundary; it does not assert Qwen
 connectivity. If the agent uses offline `demo` inference, its answer explicitly says so.
-Attachments remain downloadable and are forwarded to the agent for text/OCR extraction and cited answers. Earlier files in the same chat remain available for follow-ups; they are not added to the shared organizational corpus.
+Attachments remain downloadable and are forwarded for text extraction. RBI and SEBI file excerpts
+can support cited answers and are scoped to the conversation.
 
 ## First-time setup
 
@@ -41,7 +35,6 @@ Run these from the repository root:
 (cd backend-app && npm ci)
 (cd frontend-app && npm ci)
 (cd agent-orchestrator && python3.12 -m venv .venv && .venv/bin/pip install -e '.[test]')
-(cd document-retrieval && python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt)
 ```
 
 Create missing configuration files; preserve existing credentials:
@@ -49,7 +42,6 @@ Create missing configuration files; preserve existing credentials:
 ```bash
 (cd backend-app && { test -f .env || cp .env.example .env; })
 (cd agent-orchestrator && { test -f .env || cp .env.example .env; })
-(cd document-retrieval && { test -f .env || cp .env.example .env; })
 ```
 
 In `backend-app/.env`, set `DB_PASSWORD` before initializing a fresh database. An existing
@@ -77,10 +69,10 @@ working directory. Do not put Qwen credentials in frontend variables or the back
 
 From the repository root, use a separate terminal for each command, in this order:
 
-1. Document retrieval (first startup may download CPU model weights):
+1. Mock document retrieval:
    ```bash
-   cd document-retrieval
-   .venv/bin/python -m uvicorn document_retrieval.api:app --env-file .env --host 127.0.0.1 --port 8001 --workers 1
+   cd agent-orchestrator
+   .venv/bin/python -m uvicorn regulatory_agent.mock_retrieval:app --env-file .env --host 127.0.0.1 --port 8001
    ```
 2. Agent orchestrator (after filling `QWEN_API_KEY`):
    ```bash
@@ -103,7 +95,7 @@ From the repository root, use a separate terminal for each command, in this orde
 Open http://localhost:3000. Health endpoints: `http://127.0.0.1:3001/api/health`,
 `http://127.0.0.1:8000/health`, and `http://127.0.0.1:8001/health`.
 Agent health should show `mode: qwen` and `corpus: retrieval`. Health reports startup,
-not successful model inference; send an actual corpus question to verify generation.
+not successful model inference; try the RBI demo complaint question to verify generation against the mock.
 
 The frontend defaults to `http://127.0.0.1:3001/api`. To override, set
 `NEXT_PUBLIC_API_URL` in `frontend-app/.env.local` and restart/rebuild the frontend.
@@ -128,3 +120,14 @@ a shared local workspace without user authentication.
 ## Academic context
 
 This repository documents coursework and capstone development for the programme.
+
+
+# Agent + mock retrieval, using your Qwen configuration
+(cd agent-orchestrator && docker compose \
+  -f compose.yaml \
+  -f compose.retrieval.yaml \
+  -f compose.qwen.yaml \
+  up -d --build)
+
+# Frontend + backend + PostgreSQL + Redis
+(cd frontend-app && docker compose --profile app up -d --build --wait)

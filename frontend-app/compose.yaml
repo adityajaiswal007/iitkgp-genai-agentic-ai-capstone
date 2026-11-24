@@ -8,7 +8,7 @@ include:
 
 services:
   frontend:
-    image: operations-copilot-frontend:latest
+    image: rbi-sebi-copilot-frontend:latest
     build:
       context: .
       args:

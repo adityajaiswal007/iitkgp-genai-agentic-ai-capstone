@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Start a new conversation" }).click();
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toBeEnabled();
 });
 test.afterEach(async ({ request }, testInfo) => {
@@ -51,7 +51,7 @@ test("select, remove, send, reload and download an attachment", async ({
   await picker.setInputFiles([csv]);
   const title = `Review this file ${randomUUID()}`;
   await page
-    .getByRole("textbox", { name: "Message Operations Copilot" })
+    .getByRole("textbox", { name: "Message RBI/SEBI Copilot" })
     .fill(title);
   const sendBounds = await page
     .getByRole("button", { name: "Send message", exact: true })
@@ -159,7 +159,7 @@ test("retains selected attachments if the upload fails", async ({ page }) => {
   });
   await page.getByLabel("Choose attachments").setInputFiles([csv]);
   await page
-    .getByRole("textbox", { name: "Message Operations Copilot" })
+    .getByRole("textbox", { name: "Message RBI/SEBI Copilot" })
     .fill("Keep my draft");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByText("Upload temporarily unavailable.")).toBeVisible();
@@ -167,7 +167,7 @@ test("retains selected attachments if the upload fails", async ({ page }) => {
     page.getByRole("button", { name: "Remove operations.csv" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("textbox", { name: "Message Operations Copilot" }),
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
   ).toHaveValue("Keep my draft");
 });
 
@@ -175,7 +175,7 @@ test("uses an uploaded CSV to answer and retains it for a follow-up", async ({
   page,
 }) => {
   const input = page.getByRole("textbox", {
-    name: "Message Operations Copilot",
+    name: "Message RBI/SEBI Copilot",
   });
   await page.getByLabel("Choose attachments").setInputFiles({
     name: "revenue-proof.csv",

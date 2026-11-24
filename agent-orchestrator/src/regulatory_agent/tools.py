@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from .contracts import (SearchArgs, FetchArgs, StatusArgs, SearchData, FetchData,
                         StatusData, ToolResult, ToolError, call_with_timeout)
 
-# Entirely fictional fixtures: no actual RBI/SEBI/Income Tax rules are asserted.
+# Entirely fictional fixtures: no actual RBI/SEBI rules are asserted.
 DEMO_DOCUMENTS = [
     {'document_id':'demo-rbi', 'authority':'RBI', 'title':'SYNTHETIC RBI complaint workflow',
      'text':'In this fictional demo, record the complaint reference and consult the indexed complaint procedure. No regulatory deadline is supplied.',
@@ -13,9 +13,6 @@ DEMO_DOCUMENTS = [
     {'document_id':'demo-sebi', 'authority':'SEBI', 'title':'SYNTHETIC SEBI grievance workflow',
      'text':'In this fictional demo, preserve the grievance reference and identify the relevant intermediary before reviewing the procedure.',
      'effective_from':'2025-01-01', 'effective_to':None, 'superseded_by':None, 'fiscal_year':None},
-    {'document_id':'demo-tax', 'authority':'INCOME_TAX', 'title':'SYNTHETIC tax evidence workflow',
-     'text':'In this fictional demo, identify the financial year and assessment year before retrieving the applicable tax document. No tax liability is calculated.',
-     'effective_from':'2025-01-01', 'effective_to':None, 'superseded_by':None, 'fiscal_year':'2025-26'},
 ]
 
 class CorpusTools:
@@ -70,8 +67,6 @@ class CorpusTools:
                 status, reason = 'not_applicable', 'Outside catalogued effective interval [from, to).'
             elif args.fiscal_year and d.get('fiscal_year') not in (None, args.fiscal_year):
                 status, reason = 'not_applicable', 'Financial year mismatch.'
-            elif d['authority']=='INCOME_TAX' and d.get('fiscal_year') and not args.fiscal_year:
-                status, reason = 'unknown', 'A financial year is required.'
             else:
                 status, reason = 'applicable', 'Matches supplied date/year in this catalog snapshot.'
             results.append({'document_id':document_id,'status':status,'reason':reason})

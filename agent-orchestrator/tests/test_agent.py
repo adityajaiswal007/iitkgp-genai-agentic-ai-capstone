@@ -50,19 +50,22 @@ class AgentTests(unittest.TestCase):
         s = b.ask('t1', 'What about the follow-up?')
         self.assertEqual(s['plan']['authority'], 'RBI')
         self.assertEqual(len(s['history']), 2)
-        self.assertEqual(s['steps'], 7)
+        self.assertEqual(s['steps'], 8)
         isolated = b.ask('t2', 'What about the follow-up?')
         self.assertEqual(isolated['status'], 'clarify')
         self.assertEqual(len(isolated['history']), 1)
 
     def test_malformed_json_repaired_once(self):
-        s = self.agent(ScriptedModel({'planner': ['{bad']})).ask('t', 'RBI demo complaint')
+        s = self.agent(ScriptedModel({
+            'planner':['{bad'],
+            'json_repair':[{'action':'answer','query':'RBI demo complaint','authority':'RBI'}],
+        })).ask('t', 'RBI demo complaint')
         self.assertEqual(s['status'], 'answered')
-        self.assertEqual(s['steps'], 7)
+        self.assertEqual(s['steps'], 8)
         self.assertTrue(any(e.get('code')=='INVALID_MODEL_OUTPUT' for e in s['trace']))
 
     def test_persistent_malformed_json_stops(self):
-        s = self.agent(ScriptedModel({'planner': ['oops', 'still bad']})).ask('t', 'RBI complaint')
+        s = self.agent(ScriptedModel({'planner':['oops'], 'json_repair':['still bad']})).ask('t', 'RBI complaint')
         self.assertEqual(s['status'], 'abstained')
         self.assertEqual(s['steps'], 2)
 
@@ -71,7 +74,7 @@ class AgentTests(unittest.TestCase):
         tools.failures['search_documents'] = [TimeoutError()]
         s = self.agent(tools=tools).ask('t', 'RBI demo complaint')
         self.assertEqual(s['status'], 'answered')
-        self.assertEqual(s['steps'], 7)
+        self.assertEqual(s['steps'], 8)
         self.assertTrue(any(e.get('code')=='TIMEOUT' for e in s['trace']))
 
     def test_permanent_tool_failure_stops(self):
@@ -173,8 +176,8 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(s['status'], 'abstained')
         self.assertEqual(s['steps'], 2)
 
-    def test_fiscal_year_mismatch(self):
-        s = self.agent().ask('t', 'Income Tax demo evidence', fiscal_year='2099-00')
+    def test_catalog_date_outside_effective_interval(self):
+        s = self.agent().ask('t', 'RBI demo complaint', as_of='2024-12-31')
         self.assertEqual(s['status'], 'abstained')
 
     def test_unknown_tool_plan_is_rejected(self):
@@ -213,9 +216,13 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(s['steps'], 6)
 
     def test_draft_json_repair_is_accounted(self):
-        s = self.agent(ScriptedModel({'executor':['bad JSON']})).ask('t','RBI complaint')
+        model = ScriptedModel({
+            'executor':['bad JSON'],
+            'json_repair':[{'claims':[{'text':'Record the complaint reference.', 'citations':['S1']}]}],
+        })
+        s = self.agent(model).ask('t','RBI complaint')
         self.assertEqual(s['status'], 'answered')
-        self.assertEqual(s['steps'], 7)
+        self.assertEqual(s['steps'], 8)
 
     def test_tokenizer_count_allows_large_byte_prompts_within_daily_allowance(self):
         class CountedModel(DemoModel):
@@ -229,7 +236,7 @@ class AgentTests(unittest.TestCase):
         state = agent.ask('metered', 'What is the RBI demo complaint process?',
                           messages=transcript, token_budget=10000)
         self.assertEqual(state['status'], 'answered')
-        self.assertEqual(state['tokens_charged'], 400)
+        self.assertEqual(state['tokens_charged'], 500)
 
     def test_tokenizer_reservation_still_blocks_calls_that_cannot_fit(self):
         class CountedModel(DemoModel):
@@ -268,7 +275,7 @@ class AgentTests(unittest.TestCase):
                 return raw, None
         state = self.agent(NoUsage()).ask('unknown', 'RBI complaint', token_budget=10000)
         self.assertEqual(state['status'], 'answered')
-        self.assertEqual(state['tokens_charged'], 3 * (1500 + 32 + 900))
+        self.assertEqual(state['tokens_charged'], 4 * (1500 + 32) + 450 + 900 + 500 + 350)
         self.assertEqual(state['estimated_tokens'], state['tokens_charged'])
 
     def test_missing_usage_charges_reservation(self):
@@ -290,12 +297,12 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(s['status'], 'abstained')
         self.assertTrue(any(e.get('code')=='PROVIDER_USAGE_OVERRUN' for e in s['trace']))
 
-    def test_tax_year_survives_followup(self):
+    def test_as_of_survives_followup(self):
         a = self.agent()
-        a.ask('t','Income Tax demo evidence', fiscal_year='2025-26')
-        s = a.ask('t','What about the follow-up?')
-        self.assertEqual(s['fiscal_year'], '2025-26')
-        self.assertEqual(s['plan']['authority'], 'INCOME_TAX')
+        a.ask('t','SEBI demo grievance', as_of='2026-01-01')
+        s = a.ask('t','What about the grievance follow-up?')
+        self.assertEqual(s['as_of'], '2026-01-01')
+        self.assertEqual(s['plan']['authority'], 'SEBI')
 
     def test_input_validation(self):
         a = self.agent()

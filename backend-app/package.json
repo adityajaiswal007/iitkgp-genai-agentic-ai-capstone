@@ -1,7 +1,7 @@
 {
-  "name": "operations-copilot-backend",
+  "name": "rbi-sebi-copilot-backend",
   "version": "0.0.1",
-  "description": "Operations Copilot conversation API and backend orchestrator",
+  "description": "RBI/SEBI Copilot conversation API and backend orchestrator",
   "author": "",
   "private": true,
   "license": "UNLICENSED",
