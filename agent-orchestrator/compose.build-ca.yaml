@@ -1,0 +1,13 @@
+services:
+  agent:
+    build:
+      secrets:
+        - build_ca_bundle
+  retrieval:
+    build:
+      secrets:
+        - build_ca_bundle
+
+secrets:
+  build_ca_bundle:
+    file: ${BUILD_CA_BUNDLE:?Set BUILD_CA_BUNDLE to a trusted PEM CA bundle}

@@ -492,18 +492,6 @@ class RegulatoryAgent:
             return self.graph.invoke(state, config)
 
 
-def show_answer(state):
-    print('Status:', state['status'])
-    answer = state['answer']
-    if answer.get('message'):
-        print(answer['message'])
-    for claim in answer.get('claims', []):
-        print('-', claim['text'], '['+', '.join(claim['citations'])+']')
-    for limitation in answer.get('limitations', []):
-        print('Limitation:', limitation)
-    print('Attempts:', state['steps'], '| Tokens charged:', state['tokens_charged'])
-
-
 def export_trace(state, path):
     # Metadata only: no API keys, raw user question, document text or reasoning.
     Path(path).write_text('\n'.join(json.dumps(e) for e in state['trace'])+'\n', encoding='utf-8')

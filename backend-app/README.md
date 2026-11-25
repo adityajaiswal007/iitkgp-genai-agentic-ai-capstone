@@ -1,20 +1,19 @@
-# RBI/SEBI Copilot backend
+# RegAssist backend
 
-NestJS 12 / TypeScript orchestrator API with PostgreSQL 17, Redis-backed browser rate limits, TypeORM migrations, Swagger, request validation, and a separate orchestration module. The Next.js frontend in `../frontend-app` now saves and retrieves conversations through this API.
+The NestJS API stores conversations, attachments, and token usage in PostgreSQL. It uses Redis for browser rate limits and forwards turns to the Python agent.
 
-## Start everything in Docker
+## Run the API in Docker
 
 Docker Desktop or Docker with Colima must be running. Node.js is not needed on the host for this option.
 
 ```bash
-# First-time setup only, if .env does not exist:
-cp .env.example .env
+test -f .env || cp .env.example .env
 # Replace DB_PASSWORD in .env before starting the database.
 
 docker compose --profile app up -d --build --wait
 ```
 
-On the configured development machine, `.env` has already been created with a generated local password. Do not overwrite it after the database volume has been initialized: changing the environment variable does not change an existing PostgreSQL role's password.
+Reuse the original database password if the PostgreSQL volume already exists. Start retrieval and the agent separately using the [root quickstart](../README.md).
 
 - API: http://127.0.0.1:3001/api
 - Interactive documentation: http://127.0.0.1:3001/api/docs
@@ -26,15 +25,6 @@ On the configured development machine, `.env` has already been created with a ge
 - Rate-limit Redis from the API container: `redis:6379`
 
 The API container runs migrations before starting. PostgreSQL, Redis, and the API have health checks. The API runs as the unprivileged `node` user; host-facing ports bind to loopback. Database data lives in `operations-copilot_postgres_data`; rate-limit state lives in `operations-copilot_rate_limit_redis_data`. Redis uses AOF persistence with one-second fsync and no eviction. API restarts retain quotas; an abrupt Redis crash can lose approximately the last second of writes. Container recreation and `docker compose down` preserve volumes. `docker compose down -v` deletes them.
-
-On this Mac, Docker runs in a Colima profile named `capstone`:
-
-```bash
-colima start capstone
-docker context use colima-capstone
-```
-
-The existing macOS-trusted corporate network CA was also added to this VM so Docker image downloads can use TLS verification on this network. No certificate-verification bypass is configured.
 
 ## Develop the API on the host
 
@@ -57,21 +47,23 @@ All routes below are under `/api`.
 
 | Method | Route | Behaviour |
 | --- | --- | --- |
-| POST | `/conversations` | Create `{ "title": "Vendor review" }`; omitted title defaults to `New chat` |
+| POST | `/conversations` | Create `{ "title": "RBI complaint process" }`; omitted title defaults to `New chat` |
 | GET | `/conversations` | List metadata; `page`, `pageSize` (1–100), and optional `search` |
 | GET | `/conversations/:id` | Get metadata, timestamps, and current `version` |
-| PATCH | `/conversations/:id` | Rename with `{ "title": "Q4 vendor review" }` |
+| PATCH | `/conversations/:id` | Rename with `{ "title": "RBI complaint follow-up" }` |
 | DELETE | `/conversations/:id` | Delete conversation and messages; returns 204 even when already deleted |
 | GET | `/conversations/:id/messages` | Paginated messages, ordered by sequence ascending |
 | POST | `/conversations/:id/messages` | Generate and atomically persist one user/assistant turn |
-| GET | `/health` | PostgreSQL and Redis readiness and current orchestrator mode |
+| GET | `/conversations/:id/attachments/:attachmentId` | Download a file belonging to the conversation |
+| GET | `/conversations/usage/daily` | Daily token allowance and usage for the browser ID |
+| GET | `/health` | PostgreSQL and Redis readiness |
 
 Conversation metadata:
 
 ```json
 {
   "id": "a-server-generated-uuid",
-  "title": "Vendor review",
+  "title": "RBI complaint process",
   "version": 0,
   "createdAt": "2026-11-04T12:00:00.000Z",
   "updatedAt": "2026-11-04T12:00:00.000Z"
@@ -82,24 +74,24 @@ Send a message using the version from your latest conversation read. `requestId`
 
 ```json
 {
-  "content": "Help me plan a vendor review.",
+  "content": "What is the RBI demo complaint process?",
   "expectedVersion": 0,
   "requestId": "927a9b9e-f656-45ca-b66c-179187951a83"
 }
 ```
 
-The response contains `{ conversation, messages: [userMessage, assistantMessage], mode: "demo" }`. Each message has `id`, `conversationId`, `requestId`, `role`, `content`, `sequence`, and `createdAt`. List responses use `{ data, pagination: { page, pageSize, totalItems, totalPages } }`.
+The response contains `{ conversation, messages: [userMessage, assistantMessage], mode: "agent" }`. Each message has `id`, `conversationId`, `requestId`, `role`, `content`, `sequence`, and `createdAt`. List responses use `{ data, pagination: { page, pageSize, totalItems, totalPages } }`.
 
-Retrying the same request ID and content returns the already-saved turn. Reusing an ID for different content returns 409. A stale conversation version also returns 409; reload before trying a new turn. A database row lock serializes commits, and both messages are saved in one transaction. Orchestration runs before the transaction so a future hosted inference call does not hold a database lock. Concurrent retries can still execute inference more than once before commit; database idempotency prevents duplicate saved turns, not duplicate provider charges.
+Retrying the same request ID and content returns the already-saved turn. Reusing an ID for different content returns 409. A stale conversation version also returns 409; reload before trying a new turn. The backend reserves token allowance before inference and saves both messages in one transaction.
 
 Titles are trimmed and limited to 120 characters; user messages to 4,000 characters. Clients cannot supply an assistant/system role, timestamps, or message IDs. Invalid UUIDs, unknown fields, and invalid pagination return 400. Missing conversations return 404. Errors use `{ error: { code, message, details? } }`; internal exceptions do not expose database details or stack traces.
 
 ## Orchestrator boundary
 
-`src/orchestrator/orchestrator.service.ts` calls `AGENT_BASE_URL/v1/executions` with
-`question`, the backend conversation UUID as `conversation_id`, and the complete ordered
-PostgreSQL `history` of user/assistant messages preceding that question. Set `AGENT_BASE_URL`
-(default `http://127.0.0.1:8000`), optional matching `AGENT_API_KEY`, and
+The backend sends `question`, the conversation UUID as `conversation_id`, the preceding
+PostgreSQL transcript as `history`, and the remaining daily allowance as `token_budget`. It posts
+to `/v1/executions/attachments` when sending current or archived files and to `/v1/executions`
+otherwise. Set `AGENT_BASE_URL` (default `http://127.0.0.1:8000`), optional matching `AGENT_API_KEY`, and
 `AGENT_REQUEST_TIMEOUT_MS` (default 130000). Qwen credentials belong only in
 `../agent-orchestrator/.env`. Start retrieval and the agent before querying; see the root README.
 The Docker API profile uses `host.docker.internal:8000` by default.
@@ -108,23 +100,19 @@ Replies preserve the agent's answer text and citations. Agent outages, busy resp
 invalid responses fail the turn rather than returning canned content. The backend reports
 `mode: agent`; demo inference on the agent service is explicitly labelled in the answer.
 Reasoning state lives in the agent, while PostgreSQL supplies authoritative chat context on every
-request. The agent sends that transcript to Qwen as user/assistant messages. History exceeding
-200 messages or a 64-KiB request is rejected explicitly instead of silently truncated. Attachments are
-stored for download and forwarded as conversation-scoped evidence to the agent. Deleting a UI chat does not remove
-its agent checkpoint. A browser abort stops waiting but does not undo agent execution.
-Concurrent retries can still execute inference more than once before a deduplicated commit.
+request. The backend rejects requests with more than 200 history messages or more than
+64 KiB of JSON metadata. Attachments are stored for download and forwarded as conversation-scoped evidence.
+Deleting a chat leaves its agent checkpoint in SQLite. An accepted agent request may finish after a browser abort.
 
 ## Frontend connection
 
 The frontend uses `http://127.0.0.1:3001/api` by default. Override `NEXT_PUBLIC_API_URL` in the frontend environment when needed, then restart/rebuild Next.js. `FRONTEND_ORIGINS` in this backend is an exact comma-separated origin allowlist.
 
-Conversation history is now server-backed. Existing browser-only demo history is not automatically uploaded or deleted. The UI paginates conversation history and can load earlier messages.
-
 ## Configuration and local scope
 
 See `.env.example`. To use another PostgreSQL server, set `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME`; set `DB_SSL=true` for TLS with certificate verification. Keep real credentials out of version control. `synchronize` is disabled; change the schema through reviewed migrations. `npm run db:revert` rolls back the latest migration and can remove chat tables/data.
 
-This is a local, shared, single-workspace starter. Authentication, per-user ownership, PII redaction, and production access control are not implemented. Add these before making the API publicly accessible. CORS is not authentication. Demo replies do not execute consequential actions.
+RegAssist runs as a shared local workspace. Authentication, per-user ownership, PII redaction, and production access control are not implemented. Add these before making the API publicly accessible. CORS is not authentication. Demo replies do not execute consequential actions.
 
 There is no model-response cache yet; saved conversation history and request deduplication are database features.
 
@@ -179,7 +167,7 @@ This controls browser usage; it does not authenticate users. Clearing localStora
 npm run lint
 npm run typecheck
 npm test
-npm run test:e2e
+USER_DAILY_TOKEN_LIMIT=10000 TOKEN_BUDGET_TIMEZONE=Asia/Kolkata npm run test:e2e
 npm run build
 ```
 
@@ -237,8 +225,8 @@ Daily exhaustion returns HTTP 429 with `error.code=TOKEN_BUDGET_EXCEEDED`.
 
 PostgreSQL reservations prevent concurrent requests from spending the same daily
 allowance. One request reserves the remaining allowance until its result is saved.
-Duplicate request IDs cannot trigger additional inference. Paid retries and all
-agent model roles count. Deleting a conversation does not delete its usage ledger.
+A pending or settled reservation prevents a duplicate request ID from triggering inference.
+Paid retries and all agent model roles count. Deleting a conversation does not delete its usage ledger.
 Requests are charged to the day their reservation was created. Agent execution
 limits still apply independently.
 

@@ -8,13 +8,15 @@ RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
     sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && build_ca_option="" \
     && if [ -s /run/secrets/build_ca_bundle ]; then build_ca_option="-o Acquire::https::CaInfo=/run/secrets/build_ca_bundle"; fi \
-    && apt-get ${build_ca_option} update \
+    && apt-get ${build_ca_option} -o APT::Update::Error-Mode=any update \
     && apt-get ${build_ca_option} install -y --no-install-recommends tesseract-ocr fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-RUN python -m pip install . \
+RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
+    if [ -s /run/secrets/build_ca_bundle ]; then export PIP_CERT=/run/secrets/build_ca_bundle; fi \
+    && python -m pip install . \
     && python -m pip check \
     && useradd --create-home --uid 1000 agent \
     && mkdir -p /data /workspace \
@@ -22,13 +24,17 @@ RUN python -m pip install . \
 
 FROM base AS test
 COPY tests/ ./tests/
-RUN python -m pip install ".[test]" \
+RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
+    if [ -s /run/secrets/build_ca_bundle ]; then export PIP_CERT=/run/secrets/build_ca_bundle; fi \
+    && python -m pip install ".[test]" \
     && python -m pytest -q \
     && touch /tmp/tests-passed
 
 # Optional: docker build --target notebook -t regulatory-agent:notebook .
 FROM base AS notebook
-RUN python -m pip install ".[notebook]"
+RUN --mount=type=secret,id=build_ca_bundle,mode=0444 \
+    if [ -s /run/secrets/build_ca_bundle ]; then export PIP_CERT=/run/secrets/build_ca_bundle; fi \
+    && python -m pip install ".[notebook]"
 COPY --chown=agent:agent regulatory_agentic_layer_qwen3.ipynb validate_notebook.py /workspace/
 WORKDIR /workspace
 USER agent

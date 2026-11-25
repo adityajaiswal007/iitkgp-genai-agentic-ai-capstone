@@ -155,11 +155,6 @@ button svg {
 .new-chat-button:hover {
   border-color: #aab8a5;
 }
-.shortcut {
-  margin-left: auto;
-  font-size: 15px;
-  color: var(--muted);
-}
 .search-field {
   display: flex;
   gap: 10px;

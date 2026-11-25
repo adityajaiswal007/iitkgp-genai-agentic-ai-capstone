@@ -1,27 +1,23 @@
-# RBI/SEBI Copilot frontend
+# RegAssist frontend
 
-A ChatGPT-style workspace built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Lucide icons. Includes responsive navigation, searchable server-backed chat history, new/delete actions, agent replies, stop/copy controls, and keyboard composition.
+The Next.js chat workspace displays cited answers, searchable conversations, downloadable attachments, and daily token usage.
 
 ## Run locally
 
-Start PostgreSQL, Redis, and the NestJS backend in `../backend-app` first; see that project's README. Then use Node.js 24 (specified in `.nvmrc`):
+Start the [backend and its dependencies](../backend-app/README.md), along with the agent services in the [root quickstart](../README.md). Use Node.js 24 for the frontend.
 
 ```bash
-nvm install
-nvm use
 npm ci
 npm run dev
 ```
 
 Open http://localhost:3000. Enter sends a message; Shift+Enter adds a new line.
 
-The default API URL is `http://127.0.0.1:3001/api`. To change it, copy `.env.example` to `.env.local`, set `NEXT_PUBLIC_API_URL`, then restart/rebuild Next.js. This URL is public browser configuration, not a place for provider keys.
+The default API URL is `http://127.0.0.1:3001/api`. To change it, create `.env.local` in this folder, set `NEXT_PUBLIC_API_URL`, and restart or rebuild Next.js.
 
 ## Current scope
 
-Conversations and messages are persisted in PostgreSQL through the NestJS API. The frontend no longer writes chat history to localStorage. Previous browser-only demo conversations are not automatically uploaded or removed. The sidebar searches the server and paginates history; longer conversations can load earlier messages.
-
-Assistant replies come from the backend → agent-orchestrator → retrieval/Qwen query path. Configure the key in `../agent-orchestrator/.env` and start all four services as described in the root README. Offline agent demo inference is labelled in its answer. This is a shared local workspace without authentication or PII redaction; use sample content. The backend supplies request limits and validation. Saved history is not a model-response cache.
+The backend stores chats in PostgreSQL. The sidebar searches and paginates saved conversations. Open a conversation to load its messages and fetch older messages as needed.
 
 New replies show a typing indicator for at least one second from submission, then reveal two words every 45 milliseconds with a typing cursor. This is frontend playback of a complete API response. Saved history opens immediately without replaying. Stop freezes the visible text; reopening the conversation shows the full saved reply.
 
@@ -29,15 +25,15 @@ The UI stops waiting when you cancel. A request already accepted by the server m
 
 ## Backend integration
 
-`src/lib/chat-client.ts` implements the NestJS HTTP contract, response validation, and AbortSignal support. `src/components/chat/use-conversations.ts` handles server state and UI transitions. Extend the shared types when adding streamed responses, source citations, and agent status events. The response parser accepts `agent`, `qwen`, and `demo` service modes.
+`src/lib/chat-client.ts` implements the NestJS HTTP contract, response validation, and AbortSignal support. `src/components/chat/use-conversations.ts` handles server state and UI transitions. The backend reports `mode: agent`. Demo inference is identified in the reply text.
 
-Hosted inference keys stay in the backend environment. Never put secrets in `NEXT_PUBLIC_*` variables.
+Set hosted inference keys in `../agent-orchestrator/.env`. Next.js exposes `NEXT_PUBLIC_*` values to the browser.
 
 ## Browser identity and rate limits
 
 On the first API request during page load, `src/lib/client-identity.ts` generates a UUID v4 with `crypto.randomUUID()` and stores it as `operations_copilot_client_id` in localStorage. Every API request sends it as `X-Client-ID`, including multipart uploads and attachment downloads. Reloads and tabs on the same origin reuse the ID. Browser storage must be available; an explicit notice appears if storage is blocked. The ID is a quota identifier, not a login token, and does not control access to conversations.
 
-Redis on the backend stores shared usage across API instances. Default limits are 120 API attempts and 20 chat submissions per 60 seconds, with a 60-second cooldown after exceeding a limit. Configure these in the backend `.env` and `src/config/rate-limit.config.ts`, then restart/recreate the backend. The frontend displays the server's 429 message with the remaining wait time and does not automatically retry. Failed sends retain the draft and selected attachments. Downloads use a header-bearing fetch followed by a browser blob download, and display rate-limit errors inline.
+Redis stores request-rate counters across API instances. PostgreSQL stores daily token usage. The chat displays the remaining daily allowance for the browser ID. Default limits are 120 API attempts and 20 chat submissions per 60 seconds, with a 60-second cooldown after exceeding a limit. Configure these in the backend `.env` and `src/config/rate-limit.config.ts`, then restart/recreate the backend. The frontend displays the server's 429 message with the remaining wait time and does not automatically retry. Failed sends retain the draft and selected attachments. Downloads use a header-bearing fetch followed by a browser blob download, and display rate-limit errors inline.
 
 Clearing browser storage, switching browser/origin, or replacing the UUID creates a new quota. Account-level enforcement requires authentication. UUID generation requires HTTPS or a trusted localhost origin.
 
@@ -47,11 +43,11 @@ Keep the backend, PostgreSQL, and Redis running while testing:
 
 ```bash
 npm run lint
+npx next typegen
 npm run typecheck
 npx playwright install chromium
 npm test
 npm run build
-npm start
 ```
 
 Alternatively, point `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` at an installed compatible Chrome executable. Tests reuse/start Next.js on port 3000, exercise the real backend, and delete only the conversations they create. They require the backend URL configured for the frontend. CI should run `npx playwright install --with-deps chromium` first.
@@ -66,7 +62,7 @@ With Docker Desktop running, start the frontend, NestJS API, PostgreSQL, and Red
 docker compose --profile app up -d --build --wait
 ```
 
-Open http://localhost:3000. The API documentation is available at http://localhost:3001/api/docs. The command builds both application images, starts PostgreSQL, runs database migrations, and waits for health checks. The frontend starts after the API is healthy.
+Open http://localhost:3000. The API documentation is available at http://localhost:3001/api/docs. The command builds both application images, starts PostgreSQL and Redis, runs database migrations, and waits for health checks. Start retrieval and the agent separately using the [root quickstart](../README.md). The frontend starts after the API is healthy.
 
 `compose.yaml` includes `../backend-app/compose.yaml` and reads the existing `../backend-app/.env`. It uses the same `operations-copilot` project name and PostgreSQL/Redis volumes as backend-only startup, preserving existing chats, attachments, and quota state. Keep the frontend and backend folders beside each other. Docker Compose 2.20.3 or newer is required for includes.
 
@@ -81,7 +77,7 @@ The frontend defaults to the browser-accessible API at `http://127.0.0.1:3001/ap
 
 ## Chat attachments
 
-Use the paperclip button or drop files onto the composer. Up to five files can be selected per message, with a maximum of 5 MB per file. Supported extensions: PDF, DOCX, XLSX, TXT, MD, CSV, JSON, PNG, JPG/JPEG, WEBP, and GIF. Remove a selected file with its X button before sending. A file can also be sent without accompanying text.
+Use the paperclip button or drop files onto the composer. Up to five files can be selected per message, with a maximum of 5 MiB per file. Supported extensions: PDF, DOCX, XLSX, TXT, MD, CSV, JSON, PNG, JPG/JPEG, WEBP, and GIF. Remove a selected file with its X button before sending. A file can also be sent without accompanying text.
 
 Selected files are sent as multipart form data and stored with the user message in PostgreSQL. Saved messages show download links after a reload. Downloading returns the original bytes. Failed uploads retain the selected files and draft so the user can retry. The existing typing effect applies to replies after upload as well.
 

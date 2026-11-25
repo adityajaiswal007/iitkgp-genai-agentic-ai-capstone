@@ -1,11 +1,8 @@
 # Regulatory Agent — Python execution API and notebook
 
-The orchestrator sends search text and filters to a document retrieval API. This project
-includes a local HTTP mock backed by synthetic documents.
-
-Python 3.11+ project with a FastAPI service for the Qwen3 planner → executor → critic workflow.
-The notebook remains a standalone teaching/demo artifact. The API imports normal Python modules;
-it never executes notebook cells.
+The FastAPI service runs a Qwen3 planner, executor, and critic over document search results.
+A mock retrieval service provides synthetic documents. The standalone notebook demonstrates the
+workflow with its own fixtures. The package supports Python 3.11 and newer.
 
 The assistant covers general RBI and SEBI regulatory questions. The mock corpus contains one
 fictional workflow for each regulator. RBI and SEBI questions about user-provided files can use
@@ -55,11 +52,11 @@ AGENT_MODE=demo docker compose -f compose.yaml -f compose.retrieval.yaml up --bu
 ```
 
 Both services use the `api-demo` build target, which runs the offline tests without downloading a
-Qwen tokenizer. For hosted Qwen, use the Qwen Compose override to build the `api-qwen` target:
+Qwen tokenizer. For hosted Qwen with a private CA, use the Qwen Compose override to mount the certificate:
 
 ```sh
-cp .env.example .env
-# Fill QWEN_API_KEY first. This starts mock retrieval and mounts the configured CA.
+test -f .env || cp .env.example .env
+# Set QWEN_API_KEY and QWEN_CA_CERT before starting.
 docker compose -f compose.yaml -f compose.retrieval.yaml -f compose.qwen.yaml up --build
 ```
 
@@ -83,6 +80,38 @@ docker run --rm --name regulatory-agent -p 127.0.0.1:8000:8000 \
 
 The manual command overrides the local database path so SQLite lives in the mounted volume.
 Compose handles this path automatically.
+
+## Build behind a corporate HTTPS proxy
+
+If Docker reports `certificate verify failed` while downloading Debian or Python packages,
+save your organization's trusted public CA bundle as `certificate/build-ca-bundle.pem`.
+On macOS with the standard Zscaler certificate installed in the System keychain, create the bundle
+with the Zscaler CA and the system CA file.
+
+```sh
+mkdir -p certificate
+security find-certificate -c 'Zscaler Root CA' -p /Library/Keychains/System.keychain \
+  > certificate/build-ca-bundle.pem &&
+  cat /etc/ssl/cert.pem >> certificate/build-ca-bundle.pem
+```
+
+Run the demo with the additional Compose override from this directory.
+
+```sh
+BUILD_CA_BUNDLE=./certificate/build-ca-bundle.pem AGENT_MODE=demo \
+  docker compose -f compose.yaml -f compose.retrieval.yaml -f compose.build-ca.yaml \
+  up -d --build --wait
+```
+
+The bundle stays in the gitignored `certificate/` directory and is mounted only during the build.
+TLS checks remain enabled. For Qwen with a private server CA, add `-f compose.qwen.yaml` to
+the Compose files and set `AGENT_MODE=qwen`. The build CA and the Qwen server CA are configured separately.
+
+For a standalone build, pass the bundle directly.
+
+```sh
+docker build --secret id=build_ca_bundle,src=./certificate/build-ca-bundle.pem -t regulatory-agent:api .
+```
 
 ## Execute a query
 
@@ -113,7 +142,7 @@ The response includes:
     "sources": []
   },
   "answer_text": "Rendered answer with citations and limitations",
-  "metrics": {"steps": 7, "tokens_charged": 400, "revisions": 0, "latency_ms": 12.0},
+  "metrics": {"steps": 7, "tokens_charged": 400, "estimated_tokens": 400, "revisions": 0, "latency_ms": 12.0},
   "trace": []
 }
 ```
@@ -137,7 +166,7 @@ history are not returned. `answer_text` is convenient for a backend/frontend cha
 
 ## Connect to your Qwen server with its CA certificate
 
-Your curl command maps to these three connection settings in `.env`:
+For the capstone Qwen endpoint, configure these settings in `.env`.
 
 ```dotenv
 AGENT_MODE=qwen
@@ -188,7 +217,7 @@ model = QwenModel(
 
 There is no API key in the repository, and live connectivity to your server is not assumed by
 the offline tests. A local HTTPS test server verifies custom-CA trust and rejection of untrusted
-certificates. Other application limits and synthetic-corpus behavior remain unchanged.
+certificates.
 
 ## Use your Qwen3 endpoint
 
@@ -229,7 +258,8 @@ The `/health` endpoint reports local startup, not successful model connectivity.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
-cp .env.example .env
+test -f .env || cp .env.example .env
+# Set QWEN_API_KEY and configure TLS, or set AGENT_MODE=demo.
 python -m uvicorn regulatory_agent.api:app --env-file .env --host 127.0.0.1 --port 8000 --workers 1
 ```
 
@@ -286,9 +316,8 @@ via `RUN_LIVE=True` in section 9.
   a deadline, and a token allowance. Planner, three tools, draft and critic cost six attempts.
   A successful turn can spend one more attempt on the summary. An executor-only revision costs
   two attempts. A targeted planner revision costs at least four.
-- Token reservations use conservative serialized-input byte allowances plus output caps; they are not
-  an exact Qwen tokenizer. Provider-reported usage replaces reservations; failed/no-usage calls retain
-  the allowance. Shared team quotas need a durable atomic ledger and provider-side quota enforcement.
+- Each model call reserves prompt tokens, a serving margin, and its output allowance. See
+  [token reservation](#token-reservation) for the Qwen and offline counting rules.
 - A timed-out Python read-only tool thread can finish in the background. Real network/database
   adapters must implement native timeouts. Never reuse this wrapper for consequential write actions.
 
@@ -312,8 +341,8 @@ passage store and version catalog. Fixture search remains lexical only when no U
 catalogued dates/year, not an independent check of current law. Entity-specific applicability,
 assessment-year mapping, amendment completeness and real corpus sourcing remain domain/RAG work.
 Forward metadata events to your team's Langfuse/LangSmith/OpenTelemetry dashboard as needed.
-The NestJS backend is not automatically rewired: it can POST here with its persisted conversation
-ID and use `answer_text` as the released response. Keep this service's key in backend configuration.
+The NestJS backend calls this service with the persisted conversation ID, transcript, and daily
+token allowance. It saves `answer_text` and records usage from the execution metrics.
 
 The service is read-only. It does not file returns, submit complaints or move money. Same-model
 critic approval and valid citations are not proof of semantic correctness: evaluate against gold
@@ -405,14 +434,6 @@ added to the shared organizational corpus and are not available to other convers
 Docker installs OCR automatically. Local development requires the updated Python dependencies
 and a `tesseract` executable on PATH (for example, `brew install tesseract` on macOS).
 
-For a corporate HTTPS proxy, an optional trusted public CA bundle can be supplied only for
-OS package installation and tokenizer downloads, without disabling TLS or copying
-it into the runtime image:
-
-```bash
-docker build --secret id=build_ca_bundle,src=/absolute/path/to/trusted-ca-bundle.pem -t regulatory-agent:api .
-```
-
 ### Caller token allowance
 
 Both execution endpoints accept an optional positive integer `token_budget`.
@@ -422,11 +443,11 @@ model roles and attempts; `metrics.estimated_tokens` identifies conservative
 reservations retained when provider usage is unavailable. Provider-reported
 usage replaces the corresponding reservation. The backend owns daily budgets.
 
-### Token reservation and the daily allowance
+### Token reservation
 
 Qwen calls reserve the tokenized chat prompt (including system instructions,
 JSON schemas, conversation history and retrieved evidence), a 32-token serving
-margin, and `AGENT_MAX_OUTPUT_TOKENS`. The chat template's thinking setting
+margin, and the role output cap bounded by `AGENT_MAX_OUTPUT_TOKENS`. The chat template's thinking setting
 matches inference. Provider-reported total usage replaces that reservation;
 missing usage retains it. Calls that cannot fit the remaining allowance are
 still blocked before inference.
@@ -441,7 +462,4 @@ mount its tokenizer files and set `QWEN_TOKENIZER` to that container path.
 Offline/custom adapters without token-count support retain the conservative
 byte-based fallback. Tokenizer configuration failures stop before inference.
 
-The old byte-per-token allowance can reject a normal RAG drafting prompt even
-with thousands of daily tokens left; increasing the daily cap hides this problem.
-Qwen's documented tokenizer and chat-template usage is shown in its
-[official model card](https://huggingface.co/Qwen/Qwen3-8B#quickstart).
+See the [Qwen3-8B model card](https://huggingface.co/Qwen/Qwen3-8B#quickstart) for tokenizer and chat-template usage.
