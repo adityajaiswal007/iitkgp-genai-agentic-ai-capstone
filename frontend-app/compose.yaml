@@ -1,4 +1,4 @@
-name: operations-copilot
+name: rbi-sebi-copilot
 
 # Reuse the backend's services, credentials, and existing PostgreSQL volume.
 include:

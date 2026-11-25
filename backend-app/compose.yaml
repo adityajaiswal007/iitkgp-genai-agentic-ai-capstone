@@ -1,4 +1,4 @@
-name: operations-copilot
+name: rbi-sebi-copilot
 services:
   redis:
     image: redis:7.4-alpine
