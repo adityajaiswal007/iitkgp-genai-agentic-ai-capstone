@@ -5,13 +5,16 @@ from pydantic import ValidationError
 from .contracts import (SearchArgs, FetchArgs, StatusArgs, SearchData, FetchData,
                         StatusData, ToolResult, ToolError, call_with_timeout)
 
-# Entirely fictional fixtures: no actual RBI/SEBI rules are asserted.
+# Entirely fictional fixtures: no actual RBI, SEBI or income-tax rules are asserted.
 DEMO_DOCUMENTS = [
     {'document_id':'demo-rbi', 'authority':'RBI', 'title':'SYNTHETIC RBI complaint workflow',
      'text':'In this fictional demo, record the complaint reference and consult the indexed complaint procedure. No regulatory deadline is supplied.',
      'effective_from':'2025-01-01', 'effective_to':None, 'superseded_by':None, 'fiscal_year':None},
     {'document_id':'demo-sebi', 'authority':'SEBI', 'title':'SYNTHETIC SEBI grievance workflow',
      'text':'In this fictional demo, preserve the grievance reference and identify the relevant intermediary before reviewing the procedure.',
+     'effective_from':'2025-01-01', 'effective_to':None, 'superseded_by':None, 'fiscal_year':None},
+    {'document_id':'demo-tax', 'authority':'TAX', 'title':'SYNTHETIC income-tax appeal workflow',
+     'text':'In this fictional demo, a departmental appeal follows the monetary limits in the indexed CBDT circular. No actual limit is supplied.',
      'effective_from':'2025-01-01', 'effective_to':None, 'superseded_by':None, 'fiscal_year':None},
 ]
 

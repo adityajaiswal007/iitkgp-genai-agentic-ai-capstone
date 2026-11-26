@@ -1,0 +1,154 @@
+[
+ {
+  "category": "rules1962",
+  "qtype": "definition",
+  "difficulty": "easy",
+  "question": "Under the old Income-tax Rules, 1962, which Form is the TDS certificate for salary deduction under section 192, and which Form applies for deductions under other provisions of Chapter XVII-B?",
+  "gold_answer": "Form No. 16 applies where deduction or payment is under section 192 (and 194P); Form No. 16A applies where deduction is under any other provision of Chapter XVII-B.",
+  "key_facts": [
+   "Form 16 for section 192",
+   "Form 16A for other Chapter XVII-B deductions"
+  ],
+  "answer_type": "text",
+  "source_doc": "Income-tax-Rules-1962_2026-04-01_05-44-55_6f86ac_en.pdf",
+  "source_pages": [
+   353
+  ],
+  "evidence": [
+   "Form No. 16, if the deduction or payment of tax is under section 192 [and section 194P]; and (b) Form No. 16A if the deduction is under any other provision of Chapter XVII-B."
+  ],
+  "section_ref": "Rule 31(1)",
+  "notes": "",
+  "expected_decision": "answer",
+  "must_not_contain": [],
+  "id": "R62-01",
+  "split": "dev"
+ },
+ {
+  "category": "rules1962",
+  "qtype": "list",
+  "difficulty": "medium",
+  "question": "Under the old Income-tax Rules, 1962, what are the due dates for the quarterly TDS statements for each quarter of the financial year?",
+  "gold_answer": "Quarter ending 30 June: 31 July; 30 September: 31 October; 31 December: 31 January; 31 March: 31 May of the financial year immediately following the year of deduction.",
+  "key_facts": [
+   "30 June quarter: 31 July",
+   "30 September quarter: 31 October",
+   "31 December quarter: 31 January",
+   "31 March quarter: 31 May of following year"
+  ],
+  "answer_type": "list",
+  "source_doc": "Income-tax-Rules-1962_2026-04-01_05-44-55_6f86ac_en.pdf",
+  "source_pages": [
+   355
+  ],
+  "evidence": [
+   "3. 31st December 31st January of the financial year 4. 31st March 31st May of the financial year immediately following the financial year in which the deduction is made."
+  ],
+  "section_ref": "Rule 31A(2)",
+  "notes": "",
+  "expected_decision": "answer",
+  "must_not_contain": [],
+  "id": "R62-02",
+  "split": "test"
+ },
+ {
+  "category": "rules1962",
+  "qtype": "numeric",
+  "difficulty": "medium",
+  "question": "Under the old Income-tax Rules, 1962, from what amount of cash payment to a hotel or restaurant against a bill must the payer's PAN be quoted?",
+  "gold_answer": "PAN must be quoted for payment in cash to a hotel or restaurant against a bill or bills at any one time exceeding fifty thousand rupees.",
+  "key_facts": [
+   "Cash payment exceeding Rs. 50,000",
+   "Applies to payment to hotel or restaurant at any one time"
+  ],
+  "answer_type": "number",
+  "source_doc": "Income-tax-Rules-1962_2026-04-01_05-44-55_6f86ac_en.pdf",
+  "source_pages": [
+   536
+  ],
+  "evidence": [
+   "Payment to a hotel or restaurant against a bill or bills at any one time. Payment in cash of an amount exceeding fifty thousand rupees."
+  ],
+  "section_ref": "Rule 114B, Sl. No. 5",
+  "notes": "",
+  "expected_decision": "answer",
+  "must_not_contain": [],
+  "id": "R62-03",
+  "split": "test"
+ },
+ {
+  "category": "rules1962",
+  "qtype": "version_pair",
+  "difficulty": "easy",
+  "question": "Under the old Income-tax Rules, 1962, what is the exempt amount of Children Education Allowance per child per month, and for how many children?",
+  "gold_answer": "Under the old Income-tax Rules, 1962 the allowance is exempt up to Rs. 100 per month per child, up to a maximum of two children.",
+  "key_facts": [
+   "Rs. 100 per month per child",
+   "maximum of two children"
+  ],
+  "answer_type": "text",
+  "source_doc": "Income-tax-Rules-1962_2026-04-01_05-44-55_6f86ac_en.pdf",
+  "source_pages": [
+   10
+  ],
+  "evidence": [
+   "Children Education Allowance Whole of India Rs. 100 per month per child up to a maximum of two children."
+  ],
+  "section_ref": "Rule 2BB(2) Table",
+  "notes": "pair:1",
+  "expected_decision": "answer",
+  "must_not_contain": [],
+  "id": "R62-04",
+  "split": "dev"
+ },
+ {
+  "category": "rules1962",
+  "qtype": "version_pair",
+  "difficulty": "medium",
+  "question": "Under the old Income-tax Rules, 1962, what is the monthly perquisite value for a motor car of engine capacity not exceeding 1.6 litres used partly for official and partly for private purposes, where the employer meets running and maintenance expenses and also provides a chauffeur?",
+  "gold_answer": "Under Rule 3 of the old Rules (Table II), the value is Rs. 1,800 per month plus Rs. 900 for the chauffeur, i.e. Rs. 2,700 per month.",
+  "key_facts": [
+   "Rs. 1,800 per month for car up to 1.6 litres",
+   "additional Rs. 900 if chauffeur provided"
+  ],
+  "answer_type": "number",
+  "source_doc": "Income-tax-Rules-1962_2026-04-01_05-44-55_6f86ac_en.pdf",
+  "source_pages": [
+   32
+  ],
+  "evidence": [
+   "Rs. 1,800 (plus Rs. 900, if chauffeur is also provided to run the motor car)"
+  ],
+  "section_ref": "Rule 3(2)(A), Table II",
+  "notes": "pair:2",
+  "expected_decision": "answer",
+  "must_not_contain": [],
+  "id": "R62-05",
+  "split": "test"
+ },
+ {
+  "category": "rules1962",
+  "qtype": "version_pair",
+  "difficulty": "easy",
+  "question": "Under the old Income-tax Rules, 1962, below what aggregate value in a previous year is a gift, voucher or token received by an employee from the employer treated as nil perquisite?",
+  "gold_answer": "Under the old Rules, where the value of such gift, voucher or token is below Rs. 5,000 in the aggregate during the previous year, the perquisite value is taken as nil.",
+  "key_facts": [
+   "Threshold: below five thousand rupees in aggregate during the previous year",
+   "Value taken as nil"
+  ],
+  "answer_type": "number",
+  "source_doc": "Income-tax-Rules-1962_2026-04-01_05-44-55_6f86ac_en.pdf",
+  "source_pages": [
+   34
+  ],
+  "evidence": [
+   "where the value of such gift, voucher or token, as the case may be, is below five thousand rupees in the aggregate during the previous year, the value of perquisite shall be taken as \"nil\"."
+  ],
+  "section_ref": "Rule 3(7)(iv)",
+  "notes": "pair:3",
+  "expected_decision": "answer",
+  "must_not_contain": [],
+  "id": "R62-06",
+  "split": "test"
+ }
+]

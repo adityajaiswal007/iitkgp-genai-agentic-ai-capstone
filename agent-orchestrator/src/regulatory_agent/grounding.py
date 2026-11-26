@@ -7,6 +7,8 @@ from decimal import Decimal
 _REGULATOR_NAMES = {
     'RBI': re.compile(r'\b(?:RBI|Reserve Bank of India)\b', re.I),
     'SEBI': re.compile(r'\b(?:SEBI|Securities and Exchange Board of India)\b', re.I),
+    'TAX': re.compile(r'\b(?:CBDT|Central Board of Direct Taxes|income[- ]tax|direct[- ]tax(?:es)?|'
+                      r'Black Money \(Undisclosed|Vivad se Vishwas)\b', re.I),
 }
 _PRIVATE_VALUE = re.compile(
     r'\b[A-Z]{5}\d{4}[A-Z]\b|\b[\w.+-]+@[\w.-]+\.[A-Z]{2,}\b|'

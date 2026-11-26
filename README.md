@@ -4,51 +4,84 @@ Capstone project for the **Executive Post Graduate Programme in Generative AI an
 
 ## Project overview
 
-RegAssist answers read-only questions about RBI and SEBI regulations using cited passages.
-The repository includes a synthetic retrieval API for local development and an HTTP adapter
-for connecting an external RBI/SEBI corpus.
+RegAssist answers read-only questions about Indian financial regulation and income tax, using
+cited passages from official documents. The corpus has 72 RBI Master Directions (commercial
+banks and NBFCs) and 16 income-tax documents (the Income-tax Act, 2025, the Income-tax Rules,
+2026, CBDT circulars and notifications, and related direct-tax Acts). SEBI is supported by the
+agent but has no documents in the corpus yet.
 
 ## Applications and query flow
 
 `frontend-app` (Next.js, port 3000) → `backend-app` (NestJS, port 3001) →
-`agent-orchestrator` (FastAPI, port 8000) → a retrieval API (local mock on port 8001)
-and the hosted Qwen model. PostgreSQL on port 5433 stores the UI conversations and attachments;
-the agent owns its reasoning state in SQLite using the same conversation ID. Each query also
-carries the complete committed PostgreSQL transcript. The agent uses that history to recover prior
-context when its checkpoint or compact summary is missing.
-Context exceeding the API/model budget produces an explicit error/limitation rather than a
-silent history cut.
+`agent-orchestrator` (FastAPI, port 8000) → `rag-service` (retrieval API, port 8001)
+and the hosted Qwen model.
 
-The backend calls `POST /v1/executions` and saves its `answer_text`, including citations.
-There is no sample-answer fallback when the agent is unavailable. HTTP 502/503 reaches the UI.
-The backend response mode `agent` identifies the service boundary; it does not assert Qwen
-connectivity. If the agent uses offline `demo` inference, its answer explicitly says so.
-Attachments remain downloadable and are forwarded for text extraction. RBI and SEBI file excerpts
-can support cited answers and are scoped to the conversation.
+| Folder | Role |
+| --- | --- |
+| `frontend-app` | Chat interface |
+| `backend-app` | Conversations, attachments, rate limits and daily token allowance; PostgreSQL on port 5433 and Redis on port 6380 |
+| `agent-orchestrator` | LangGraph planner, executor and critic; calls retrieval and Qwen; keeps its reasoning state in SQLite under the same conversation ID |
+| `rag-service` | Hybrid retrieval over the documents in `data/`; see [`rag-service/README.md`](rag-service/README.md) |
+| `data` | RBI and income-tax documents and gold question sets; see [`data/README.md`](data/README.md) |
+
+The backend calls `POST /v1/executions` and saves its `answer_text`, including citations. There
+is no sample-answer fallback when the agent is unavailable: HTTP 502/503 reaches the UI. Each
+query carries the complete committed PostgreSQL transcript, which the agent uses to recover
+context when its checkpoint or summary is missing. Context exceeding the model budget produces
+an explicit error rather than a silent history cut. If the agent runs in offline `demo` mode,
+its answers say so. Attachments remain downloadable and are forwarded for text extraction;
+RBI, SEBI and income-tax file excerpts can support cited answers within their conversation.
+
+Changes from the original `agent-orchestrator` branch are listed in
+[`CHANGES_FROM_BASE.md`](CHANGES_FROM_BASE.md).
 
 ## First-time setup
 
-Use Node.js 24, Python 3.12, and running Docker Desktop for PostgreSQL.
-Run these from the repository root:
+Use Node.js 24, Python 3.12, and a running Docker Desktop for PostgreSQL and Redis. Run these
+from the repository root:
 
 ```bash
 (cd backend-app && npm ci)
 (cd frontend-app && npm ci)
 (cd agent-orchestrator && python3.12 -m venv .venv && .venv/bin/pip install -e '.[test]')
+(cd rag-service && python3.12 -m venv .venv && .venv/bin/pip install -e '.[test,ocr]')
 ```
 
-Create missing configuration files; preserve existing credentials:
+Create the configuration files without overwriting any you already have:
 
 ```bash
 (cd backend-app && { test -f .env || cp .env.example .env; })
 (cd agent-orchestrator && { test -f .env || cp .env.example .env; })
+(cd rag-service && { test -f .env || cp .env.example .env; })
 ```
 
-In `backend-app/.env`, set `DB_PASSWORD` before initializing a fresh database. An existing
-volume requires its existing password. The backend's `AGENT_BASE_URL` defaults to
-`http://127.0.0.1:8000`, with a 130-second deadline (longer than the agent's 120-second budget).
+## What to change in the `.env` files
 
-Put the **Qwen API key only in `agent-orchestrator/.env`**:
+The `.env` files hold passwords and keys, so they are never committed. Each app has its own.
+Only the settings below need your attention; leave everything else at its default.
+
+### `backend-app/.env`: required
+
+| Setting | Change to |
+| --- | --- |
+| `DB_PASSWORD` | Any password you choose for the local PostgreSQL database. Set it **before** the first `npm run db:up`. If the database volume already exists, keep the password it was created with. |
+| `AGENT_API_KEY` | Leave empty, unless you also set it in `agent-orchestrator/.env`; the two must match. |
+
+The other values (ports, Redis, rate limits, `AGENT_BASE_URL=http://127.0.0.1:8000`, the
+130-second agent timeout and the 100,000-token daily allowance) work as they are.
+
+### `agent-orchestrator/.env`: required for real answers
+
+| Setting | Change to |
+| --- | --- |
+| `QWEN_API_KEY` | Your Qwen API key. Put it **only** in this file, never in the backend or frontend. |
+| `QWEN_CA_CERT` | The path to the Qwen server's CA certificate file, relative to `agent-orchestrator`. The certificate is not in the repository (`*.crt` files are ignored), so ask the team for it, save it as `agent-orchestrator/certificate/vm05-ca.crt`, and set `QWEN_CA_CERT=./certificate/vm05-ca.crt`. The example file's default name, `model.crt`, works too if you save it under that name. |
+| `QWEN_BASE_URL` | Leave as `https://103.42.50.41:1033/v1` unless the team's model server moves. The `/v1` ending is required. |
+| `AGENT_MODE` | Leave as `qwen`. Set `demo` only to test the plumbing offline; demo answers just repeat retrieved passages. |
+| `RAG_BASE_URL` | Leave as `http://127.0.0.1:8001`, the retrieval service. |
+| `AGENT_API_KEY`, `RAG_API_KEY` | Leave empty, or set each to match the backend (`AGENT_API_KEY`) and `rag-service/.env` (`RAG_API_KEY`). |
+
+Example of the lines you edit:
 
 ```dotenv
 AGENT_MODE=qwen
@@ -58,21 +91,38 @@ QWEN_CA_CERT=./certificate/vm05-ca.crt
 RAG_BASE_URL=http://127.0.0.1:8001
 ```
 
-The provider base address is `https://103.42.50.41:1033`; the OpenAI-compatible client requires
-`/v1` in its configured API base. The local certificate is
-`agent-orchestrator/certificate/vm05-ca.crt`; the relative env path is resolved from that app's
-working directory. Do not put Qwen credentials in frontend variables or the backend.
-`AGENT_API_KEY`, if enabled, is a separate matching key in backend/agent env files;
-`RAG_API_KEY`, if enabled, must match in agent/retrieval env files.
+### `rag-service/.env`: optional
+
+With no changes, retrieval uses keyword search (BM25), which already works well. Fill in these
+lines only to add the team's embedding server for hybrid retrieval:
+
+| Setting | Change to |
+| --- | --- |
+| `EMBEDDING_BASE_URL` | The embedding server's address, ending in `/v1` |
+| `EMBEDDING_MODEL` | The model name served there |
+| `EMBEDDING_API_KEY` | Its key, if it needs one |
+| `EMBEDDING_CA_CERT` | Path to its certificate, for example `./certificate/embedding.crt` (the `embedding.crt` from the `certificate` branch) |
+| `RERANK_BASE_URL`, `RERANK_MODEL` | A reranking server, if the team has one |
+| `RAG_API_KEY` | Leave empty, or match `agent-orchestrator/.env` |
+
+Keep `RAG_DATA_DIR=../data` and `RAG_INDEX_DIR=index`. The first start after adding an
+embedding model sends every passage to the server once, which can take several minutes; later
+starts reuse the saved result. See [`rag-service/README.md`](rag-service/README.md) for details.
+
+### `frontend-app/.env.local`: usually not needed
+
+The frontend talks to `http://127.0.0.1:3001/api` by default. Only if the backend runs
+elsewhere, create `frontend-app/.env.local` with `NEXT_PUBLIC_API_URL=<backend URL>/api` and
+restart or rebuild the frontend.
 
 ## Start all four applications
 
 From the repository root, use a separate terminal for each command, in this order:
 
-1. Mock document retrieval:
+1. Retrieval service (builds its index on first start, about 15 seconds):
    ```bash
-   cd agent-orchestrator
-   .venv/bin/python -m uvicorn regulatory_agent.mock_retrieval:app --env-file .env --host 127.0.0.1 --port 8001
+   cd rag-service
+   .venv/bin/python -m uvicorn regassist_rag.api:app --env-file .env --host 127.0.0.1 --port 8001
    ```
 2. Agent orchestrator (after filling `QWEN_API_KEY`):
    ```bash
@@ -93,41 +143,57 @@ From the repository root, use a separate terminal for each command, in this orde
    ```
 
 Open http://localhost:3000. Health endpoints: `http://127.0.0.1:3001/api/health`,
-`http://127.0.0.1:8000/health`, and `http://127.0.0.1:8001/health`.
-Agent health should show `mode: qwen` and `corpus: retrieval`. Health reports startup,
-not successful model inference; try the RBI demo complaint question to verify generation against the mock.
+`http://127.0.0.1:8000/health` and `http://127.0.0.1:8001/health`. Agent health should show
+`mode: qwen`; retrieval health shows the index snapshot and document counts (72 RBI, 16 TAX).
+Health reports startup, not successful inference. To check the whole chain, ask "Within how
+many days must a bank close a credit card after the cardholder asks?" (an RBI question) and
+"What monetary limits does CBDT Circular 17/2019 set for departmental appeals?" (a tax
+question). Both answers should cite their source documents.
 
-The frontend defaults to `http://127.0.0.1:3001/api`. To override, set
-`NEXT_PUBLIC_API_URL` in `frontend-app/.env.local` and restart/rebuild the frontend.
+The mock retrieval API used in the original branch still exists for agent tests
+(`regulatory_agent.mock_retrieval`) but serves only fictional documents. Do not run it at the
+same time as `rag-service`: both use port 8001.
 
-For agent + retrieval in Docker (after configuring the key and certificate):
+## Run with Docker
+
+Use Docker Compose 2.24 or newer. Configure the `.env` files and certificates first.
 
 ```bash
-cd agent-orchestrator
-docker compose -f compose.yaml -f compose.retrieval.yaml -f compose.qwen.yaml up --build
+# Retrieval service on port 8001
+(cd rag-service && docker compose up -d --build)
+
+# Agent, pointed at the retrieval service on the host, using the Qwen certificate override
+(cd agent-orchestrator && RAG_BASE_URL=http://host.docker.internal:8001 \
+  docker compose -f compose.yaml -f compose.qwen.yaml up -d --build)
+
+# Frontend + backend + PostgreSQL + Redis
+(cd frontend-app && docker compose --profile app up -d --build --wait)
 ```
 
-The certificate override mounts the host file read-only at
-`/agent-orchestrator/certificate/vm05-ca.crt` inside the agent container.
-Use either local Python or Docker for each service to avoid port conflicts.
-The backend Docker profile uses `host.docker.internal:8000`; override
-`AGENT_DOCKER_BASE_URL` if the agent is on a different reachable host/network.
+Do not add `compose.retrieval.yaml` to the agent command: it starts the mock retrieval API on
+the same port. The Qwen override mounts the certificate named by `QWEN_CA_CERT` read-only
+inside the agent container. The backend container reaches the agent at
+`host.docker.internal:8000`; set `AGENT_DOCKER_BASE_URL` in `backend-app/.env` if the agent is
+elsewhere. Use either local Python or Docker for each service, not both, to avoid port
+conflicts.
 
-Concurrent retries can run inference more than once; PostgreSQL deduplicates saved turns,
-not model calls. Deleting UI chats does not delete agent SQLite checkpoints. This is still
-a shared local workspace without user authentication.
+## Tests and evaluation
+
+```bash
+(cd agent-orchestrator && .venv/bin/python -m pytest)
+(cd rag-service && .venv/bin/pip install -e ../agent-orchestrator && .venv/bin/python -m pytest)
+(cd rag-service && .venv/bin/python scripts/eval_retrieval.py --label my-run)
+```
+
+The evaluation runs every answerable gold question (28 RBI, 74 income tax) against the
+retrieval service and writes `rag-service/eval_results/my-run/summary.md`.
+
+## Limitations
+
+Concurrent retries can run inference more than once; PostgreSQL deduplicates saved turns, not
+model calls. Deleting UI chats does not delete agent SQLite checkpoints. This is a shared local
+workspace without user authentication. The UI is still titled "RBI/SEBI Copilot".
 
 ## Academic context
 
 This repository documents coursework and capstone development for the programme.
-
-
-# Agent + mock retrieval, using your Qwen configuration
-(cd agent-orchestrator && docker compose \
-  -f compose.yaml \
-  -f compose.retrieval.yaml \
-  -f compose.qwen.yaml \
-  up -d --build)
-
-# Frontend + backend + PostgreSQL + Redis
-(cd frontend-app && docker compose --profile app up -d --build --wait)

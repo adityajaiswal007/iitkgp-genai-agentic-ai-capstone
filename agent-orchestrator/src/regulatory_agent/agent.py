@@ -17,7 +17,7 @@ from .models import REFUSAL_MESSAGES, ROLE_OUTPUT_TOKENS, build_messages, histor
 from .grounding import (catalog_statuses, contains_private_value, label_evidence, numbers,
                         redact, regulatory_uploads)
 
-ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI and SEBI evidence.'
+ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI, SEBI and income-tax evidence.'
 TOOL_CHAIN = list(TOOL_SCHEMAS)
 
 
@@ -212,12 +212,12 @@ class RegulatoryAgent:
                 'remaining_attempts':self.limits.max_steps-s['steps']}, Plan)
             if plan.action != 'answer':
                 message = (REFUSAL_MESSAGES[plan.refusal_category or 'out_of_scope'] if plan.action == 'refuse'
-                           else redact(plan.message.strip()) or 'Which RBI or SEBI rule or entity do you mean?')
+                           else redact(plan.message.strip()) or 'Which RBI, SEBI or income-tax rule or entity do you mean?')
                 s.update(plan={'action':plan.action}, status='clarify' if plan.action=='clarify' else 'refused',
                          route='finish', answer={'claims':[], 'limitations':[], 'message':message})
                 return s
             if plan.authority == 'UPLOAD' and not s['attachment_passages']:
-                raise ControlledStop('INVALID_PLAN', 'No RBI or SEBI attachment evidence is available.')
+                raise ControlledStop('INVALID_PLAN', 'No RBI, SEBI or income-tax attachment evidence is available.')
             if not plan.authority or not plan.query.strip() or plan.refusal_category:
                 raise ControlledStop('INVALID_PLAN', 'Planner did not supply a valid authority and search query.')
             plan.query = redact(plan.query.strip())
@@ -416,7 +416,7 @@ class RegulatoryAgent:
             if verdict.decision=='clarify':
                 s.update(status='clarify', route='finish', answer={
                     'claims':[], 'limitations':[], 'message':redact(verdict.clarification_question.strip())
-                    or 'Which RBI or SEBI rule, date or type of entity should I use?'})
+                    or 'Which RBI, SEBI or income-tax rule, date or type of entity should I use?'})
                 return s
             if (verdict.decision=='revise' or issues) and s['revision'] < self.limits.max_revisions:
                 target = verdict.revise_target or ('executor' if issues else 'planner')
