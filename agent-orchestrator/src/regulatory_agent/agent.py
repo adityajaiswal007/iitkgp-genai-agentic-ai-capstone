@@ -16,6 +16,7 @@ from .attachments import AttachmentTools
 from .models import REFUSAL_MESSAGES, ROLE_OUTPUT_TOKENS, build_messages, history_messages
 from .grounding import (catalog_statuses, contains_private_value, label_evidence, numbers,
                         redact, regulatory_uploads)
+from . import tracing
 
 ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI, SEBI and income-tax evidence.'
 TOOL_CHAIN = list(TOOL_SCHEMAS)
@@ -32,7 +33,8 @@ class RegulatoryAgent:
         self.saver = SqliteSaver(self.connection)
         graph = StateGraph(AgentState)
         for name in ('resolve_context','planner','executor','critic','finish'):
-            graph.add_node(name, getattr(self, name))
+            graph.add_node(name, tracing.traced_node(name, getattr(self, name),
+                                                     'evaluator' if name == 'critic' else 'chain'))
         graph.add_edge(START, 'resolve_context')
         graph.add_conditional_edges('resolve_context', lambda s:s['route'],
                                     {'planner':'planner','finish':'finish'})
@@ -83,10 +85,21 @@ class RegulatoryAgent:
             usage = None
             raw = ''
             try:
-                raw, usage = call_with_timeout(
-                    lambda:self.model.complete(call_role, request_payload, schema,
-                                               output_cap, self.remaining_seconds(s)),
-                    self.remaining_seconds(s))
+                with tracing.observation(
+                        f'qwen.{call_role}', as_type='generation',
+                        model=getattr(self.model, 'model', type(self.model).__name__),
+                        model_parameters={'max_tokens': output_cap, 'temperature': 0},
+                        input=request_payload, metadata={'attempt': attempt, 'reserved_tokens': reservation}) as generation:
+                    try:
+                        raw, usage = call_with_timeout(
+                            lambda:self.model.complete(call_role, request_payload, schema,
+                                                       output_cap, self.remaining_seconds(s)),
+                            self.remaining_seconds(s))
+                    except Exception as exc:
+                        generation.update(level='ERROR', status_message=type(exc).__name__)
+                        raise
+                    generation.update(output=tracing.clip(raw),
+                                      usage_details={'total': usage} if isinstance(usage, int) else None)
                 if usage is not None:
                     if type(usage) is not int or usage < 0:
                         raise PermanentModelError('Invalid provider usage metadata.')
@@ -148,7 +161,13 @@ class RegulatoryAgent:
             self.take_step(s)
             start = time.monotonic()
             tools = AttachmentTools(self.tools, s['attachment_passages'], s['current_attachment_ids']) if s['attachment_passages'] else self.tools
-            result = tool_attempt(tools, name, arguments, self.remaining_seconds(s))
+            with tracing.observation(f'tool.{name}',
+                                     as_type='retriever' if name in ('search_documents', 'fetch_passages') else 'tool',
+                                     input=arguments, metadata={'attempt': attempt+1}) as span:
+                result = tool_attempt(tools, name, arguments, self.remaining_seconds(s))
+                span.update(output=tracing.summarise_tool_result(name, result.data) if result.ok else None,
+                            level='DEFAULT' if result.ok else 'ERROR',
+                            status_message=None if result.ok else result.error.code)
             self.event(s,'tool',name,ok=result.ok,attempt=attempt+1,
                        latency_ms=round((time.monotonic()-start)*1000),
                        code=None if result.ok else result.error.code)
@@ -160,6 +179,7 @@ class RegulatoryAgent:
 
     def stop(self, s, exc):
         self.event(s,'control','stop',code=exc.code)
+        tracing.event('control.stop', level='WARNING', output={'code': exc.code, 'message': exc.message})
         s.update(status='abstained', route='finish',
                  answer={'claims':[], 'limitations':[exc.message], 'message':ABSTAIN_MESSAGE})
         return s
@@ -401,6 +421,12 @@ class RegulatoryAgent:
                 value=='pass' for value in verdict.checks.model_dump().values())
             self.event(s, 'review', 'verdict', decision=verdict.decision,
                        deterministic_issue_count=len(issues), checks_pass=checks_pass)
+            tracing.event('critic.verdict', level='DEFAULT' if verdict.decision == 'accept' and not issues else 'WARNING',
+                          output={'decision': verdict.decision,
+                                  'checks': verdict.checks.model_dump() if verdict.checks else None,
+                                  'automatic_check_issues': issues, 'critic_issues': verdict.issues,
+                                  'revise_target': verdict.revise_target},
+                          metadata={'revision': s['revision']})
             if verdict.decision=='accept' and not issues and checks_pass:
                 _, citations = label_evidence(s['evidence'], s['document_status'])
                 claims = [

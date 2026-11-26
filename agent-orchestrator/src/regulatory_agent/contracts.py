@@ -1,4 +1,5 @@
 from __future__ import annotations
+import contextvars
 import copy
 import json
 import os
@@ -215,7 +216,9 @@ def call_with_timeout(fn, seconds):
             result_queue.put((True, fn()))
         except Exception as exc:
             result_queue.put((False, exc))
-    threading.Thread(target=worker, daemon=True).start()
+    # Copy context variables (including the active trace span) into the worker thread.
+    context = contextvars.copy_context()
+    threading.Thread(target=context.run, args=(worker,), daemon=True).start()
     try:
         ok, value = result_queue.get(timeout=seconds)
     except queue.Empty:

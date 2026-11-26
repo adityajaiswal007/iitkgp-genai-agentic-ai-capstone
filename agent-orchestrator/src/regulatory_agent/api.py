@@ -10,13 +10,14 @@ from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import tracing
 from .attachments import UploadedFile, AttachmentError, extract_attachments, MAX_UPLOAD_BODY
 from .agent import RegulatoryAgent
 from .config import Settings
@@ -170,6 +171,7 @@ def create_app(settings: Settings | None = None):
         try:
             yield
         finally:
+            tracing.shutdown()  # send any traces still buffered
             app.state.agent.close()
             if isinstance(tools, HttpCorpusTools):
                 tools.close()
@@ -209,18 +211,18 @@ def create_app(settings: Settings | None = None):
               dependencies=[Depends(authorize)], responses={
                   status:{'model':ErrorResponse} for status in (401,409,413,422,500)},
               summary='Execute one query through the planner, tools, and critic')
-    def execute(payload: ExecutionRequest, request: Request):
-        return run_execution(payload, request)
+    def execute(payload: ExecutionRequest, request: Request, response: Response):
+        return run_execution(payload, request, response)
 
     @app.post('/v1/executions/attachments', response_model=ExecutionResponse,
               dependencies=[Depends(authorize)], summary='Execute a question with conversation attachment bytes')
-    def execute_with_attachments(payload: AttachmentExecutionRequest, request: Request):
+    def execute_with_attachments(payload: AttachmentExecutionRequest, request: Request, response: Response):
         metadata = payload.model_dump(mode='json', exclude={'attachments'})
         if len(json.dumps(metadata, ensure_ascii=False).encode()) > 65536:
             raise HTTPException(413, detail={'code':'REQUEST_TOO_LARGE','message':'Conversation metadata exceeds 64 KiB.'})
-        return run_execution(payload, request)
+        return run_execution(payload, request, response)
 
-    def run_execution(payload, request):
+    def run_execution(payload, request, response=None):
         if not request.app.state.execution_lock.acquire(blocking=False):
             raise HTTPException(409,detail={'code':'SERVICE_BUSY','message':'An execution is running. Retry after it completes.'})
         try:
@@ -233,13 +235,34 @@ def create_app(settings: Settings | None = None):
             current_ids = ['upload-'+hashlib.sha256(base64.b64decode(file.content_base64)).hexdigest()
                            for file in payload.attachments if file.current] if isinstance(payload, AttachmentExecutionRequest) else []
             conversation_id = payload.conversation_id or str(uuid.uuid4())
-            state = request.app.state.agent.ask(
-                conversation_id,payload.question,
-                as_of=payload.as_of.isoformat() if payload.as_of else None,
-                fiscal_year=payload.fiscal_year,
-                messages=[m.model_dump() for m in payload.history] if payload.history is not None else None,
-                attachment_passages=uploads, current_attachment_ids=current_ids, started_at=started_at, token_budget=payload.token_budget)
-            answer = Answer.model_validate(state['answer'])
+            mode = request.app.state.settings.mode
+            with tracing.new_trace(), \
+                 tracing.trace_attributes(session_id=conversation_id, trace_name='regassist-query',
+                                          tags=['regassist', mode], metadata={'corpus': request.app.state.corpus}), \
+                 tracing.observation('regassist-query', as_type='agent', input={
+                     'question': payload.question, 'as_of': payload.as_of.isoformat() if payload.as_of else None,
+                     'fiscal_year': payload.fiscal_year, 'history_turns': len(payload.history or []),
+                     'attachments': len(current_ids)}) as root:
+                trace_id = tracing.current_trace_id()
+                if tracing.public_traces():
+                    root.set_trace_as_public()
+                state = request.app.state.agent.ask(
+                    conversation_id,payload.question,
+                    as_of=payload.as_of.isoformat() if payload.as_of else None,
+                    fiscal_year=payload.fiscal_year,
+                    messages=[m.model_dump() for m in payload.history] if payload.history is not None else None,
+                    attachment_passages=uploads, current_attachment_ids=current_ids, started_at=started_at, token_budget=payload.token_budget)
+                answer = Answer.model_validate(state['answer'])
+                root.update(output=render_answer(answer),
+                            level='DEFAULT' if state['status'] in ('answered', 'clarify', 'refused') else 'WARNING',
+                            metadata={'status': state['status'], 'authority': state['plan'].get('authority'),
+                                      'steps': state['steps'], 'revisions': state['revision'],
+                                      'tokens_charged': state['tokens_charged']})
+            if trace_id and response is not None:
+                response.headers['X-Trace-Id'] = trace_id
+            if trace_id and tracing.print_trace_urls():
+                url = tracing.trace_url(trace_id)
+                print(f"Trace ({state['status']}): {url or trace_id}", flush=True)
             return ExecutionResponse(
                 execution_id=str(uuid.uuid4()), conversation_id=conversation_id,
                 status=state['status'], mode=request.app.state.settings.mode,
