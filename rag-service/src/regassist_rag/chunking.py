@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
-CHUNKER_VERSION = "10"
+CHUNKER_VERSION = "13"
 
 _PARA = re.compile(r"^(\d{1,3}[A-Z]?)\.\s*(?=[A-Z(\"“‘'])")          # 19. Any request / 2. Definitions.—
 _CHAPTER = re.compile(r"^(CHAPTER|Chapter)\s*[-–—:]?\s*([IVXLC]+|\d+)\b[\s:.\-–—]*(.{0,90})")
@@ -24,6 +24,11 @@ _ANNEX = re.compile(
     r"|Annex(?:ure)?\s*[-–—]?\s*[IVXLC\d]+[A-Z]?(?:\s*[-–—:]\s*\S.*)?"
     r"|(?:Appendix|Schedule)\s*[-–—]?\s*[IVXLC\d]+[A-Z]?\s*[-–—:]\s*\S.*"
     r")\s*$")
+# Lettered sub-section headings used throughout RBI Directions, on a line of their own:
+# "B. Reset of interest rates", "B.1 Reset of interest rates under ... (MCLR) system",
+# "A.3 Spread under External Benchmark". The dot after the letter is required, so ordinary
+# sentences such as "A Bank shall ..." never match.
+_SUBHEADING = re.compile(r"^(?!S\.\s?No\b)[A-Z]\.(?:\d{1,2}(?:\.\d{1,2})?)?\s+[A-Z][^.;:]{3,150}$")  # not "S. No" table headers
 _SENTENCE = re.compile(r"(?<=[.;:])\s+(?=[A-Z(\"“])")
 
 
@@ -37,6 +42,7 @@ class Chunk:
     section: str
     heading: str
     text: str
+    subheading: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -103,14 +109,14 @@ def _label(unit: str, numbers: list[str], continued: bool) -> str:
 
 def chunk_document(document_id: str, authority: str, pages: list[str],
                    target_chars: int = 1200, max_chars: int = 1500, unit: str = "para",
-                   overlap_chars: int = 250) -> list[Chunk]:
+                   overlap_chars: int = 250, subheadings: bool = False) -> list[Chunk]:
     """unit names the numbered division in labels: 'para', 'section' or 'rule'.
 
     Each chunk after the first on a page starts with the last ~overlap_chars of the
     previous chunk, so a table row or sentence cut at a boundary appears whole in at
     least one chunk. Chunks never exceed max_chars + overlap_chars."""
     chunks: list[Chunk] = []
-    heading, current_number, in_annex = "", None, False
+    heading, subheading, current_number, in_annex = "", "", None, False
 
     for page_index, page_text in enumerate(pages, start=1):
         lines = [l for l in page_text.split("\n") if l.strip()]
@@ -122,6 +128,7 @@ def chunk_document(document_id: str, authority: str, pages: list[str],
             annex = bool(_ANNEX.match(line)) and len(line) < 120
             if (_CHAPTER.match(line) or _PART.match(line) or annex) and len(line) < 140:
                 heading = line[:120]
+                subheading = ""  # a new chapter, part or annex starts without a sub-section
                 if annex:
                     # Annexes, schedules and forms restart their numbering; their numbered
                     # items are not paragraphs, sections or rules.
@@ -129,32 +136,48 @@ def chunk_document(document_id: str, authority: str, pages: list[str],
                 elif _CHAPTER.match(line):
                     in_annex = False
             word = "item" if in_annex else unit
+            if subheadings and _SUBHEADING.match(line) and not _PARA.match(line):
+                # A sub-section starts here: it opens a new block, so its paragraphs are
+                # never packed together with paragraphs of the previous sub-section.
+                subheading = line[:150]
+                blocks.append([None, False, [line], heading, word, subheading])
+                continue
             para = _PARA.match(line)
             if para and len(line) > 8 and _plausible_next(para.group(1), current_number):
                 current_number = para.group(1)
-                blocks.append([current_number, False, [line], heading, word])
+                blocks.append([current_number, False, [line], heading, word, subheading])
             elif not blocks:
-                blocks.append([current_number, current_number is not None, [line], heading, word])
+                blocks.append([current_number, current_number is not None, [line], heading, word, subheading])
             else:
                 blocks[-1][2].append(line)
 
         # Pack blocks into chunks of roughly target size without crossing the page.
-        packed: list[tuple[list, bool, str, str, str]] = []
-        for number, continued, block_lines, block_heading, word in blocks:
+        packed: list[tuple[list, bool, str, str, str, str]] = []
+        for number, continued, block_lines, block_heading, word, block_sub in blocks:
             text = " ".join(block_lines)
-            if packed and packed[-1][4] == word and len(packed[-1][2]) + len(text) + 1 <= target_chars:
-                n, c, t, h, w = packed[-1]
-                packed[-1] = (n + [number], c, t + "\n" + text, h, w)
+            if (packed and number is None and block_sub != packed[-1][5] and packed[-1][0] == [None]
+                    and len(packed[-1][2]) <= 200):
+                # A parent heading followed directly by a child ("B. Reset of interest rates"
+                # then "B.1 ..."): keep both lines, under the more specific sub-section.
+                n, c, t, h, w, sub = packed[-1]
+                packed[-1] = (n, c, t + "\n" + text, h, w, block_sub)
+            elif (packed and packed[-1][4] == word and packed[-1][5] == block_sub
+                    and (len(packed[-1][2]) + len(text) + 1 <= target_chars
+                         or (packed[-1][0] == [None] and len(packed[-1][2]) <= 200))):
+                # (the second case: a heading on its own always joins the text that follows it)
+                n, c, t, h, w, sub = packed[-1]
+                packed[-1] = (n + [number], c, t + "\n" + text, h, w, sub)
             else:
-                packed.append(([number], continued, text, block_heading, word))
+                packed.append(([number], continued, text, block_heading, word, block_sub))
 
-        for numbers, continued, text, block_heading, word in packed:
+        for numbers, continued, text, block_heading, word, block_sub in packed:
             for piece_index, piece in enumerate(_split_long(text, max_chars)):
                 if (len(piece) < 40 and chunks and chunks[-1].page == page_index
+                        and chunks[-1].subheading == block_sub
                         and len(chunks[-1].text) + len(piece) + 1 <= max_chars + overlap_chars):
                     chunks[-1].text += "\n" + piece
                     continue
-                if overlap_chars and chunks and chunks[-1].page == page_index:
+                if overlap_chars and chunks and chunks[-1].page == page_index and chunks[-1].subheading == block_sub:
                     piece = "… " + _overlap_tail(chunks[-1].text, overlap_chars) + "\n" + piece
                 ordinal = len(chunks)
                 label = _label(word, numbers if piece_index == 0 else numbers[:1], continued or piece_index > 0)
@@ -166,6 +189,7 @@ def chunk_document(document_id: str, authority: str, pages: list[str],
                     ordinal=ordinal,
                     section=label or f"page {page_index}",
                     heading=block_heading,
+                    subheading=block_sub,
                     text=piece,
                 ))
     return chunks

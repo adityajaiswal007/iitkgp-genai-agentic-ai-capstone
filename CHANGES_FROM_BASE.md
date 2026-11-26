@@ -20,7 +20,8 @@ This workspace starts from the `agent-orchestrator` branch. Everything below is 
 | `src/regulatory_agent/contracts.py` | `Regulator` now allows `TAX` alongside `RBI` and `SEBI`. Search arguments, passages and conversation summaries accept it. |
 | `src/regulatory_agent/prompts/planner.md` | Routing rule for income-tax and direct-tax questions; keep instrument and section numbers exact and never map 1961-Act sections to the 2025 Act; GST and other indirect taxes are out of scope; personal tax computation, regime choice and planning are personal advice; concealment is rule evasion. `BOTH` is defined as RBI plus SEBI. |
 | `src/regulatory_agent/prompts/planner.md` (clarification) | RBI topics include loans, lending, interest rates and deposits. Clarify only for a fact about the user's situation that changes the answer; never ask which regulation or document applies, since finding it is the search's job. |
-| `src/regulatory_agent/prompts/critic.md` | Never ask which regulation or document applies; request a planner revision instead. |
+| `src/regulatory_agent/prompts/critic.md` | Never ask which regulation or document applies; request a planner revision instead. Applicability fails when a claim applies a rule outside the sub-section named in its passage's section label. |
+| `src/regulatory_agent/prompts/executor.md` (scope) | Apply a passage's rule only to what its sub-section covers (benchmark, product or entity), never to a different one. |
 | `src/regulatory_agent/prompts/shared.md` | Assistant scope covers RBI, SEBI and income tax. |
 | `src/regulatory_agent/prompts/executor.md` | Evidence issued under the Income-tax Act, 1961 must be flagged in limitations, using the status reason. |
 | `src/regulatory_agent/prompts/state_summary.md` | Mentions income-tax questions. |

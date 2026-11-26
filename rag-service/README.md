@@ -45,6 +45,10 @@ sets, are listed in the `aliases` column of `tax_catalog.csv`.
    each passage; the service refuses settings that would exceed this. Numbers must increase,
    so numbered list items and table rows inside a paragraph do not start a new one.
    Annexes, schedules, appendices and forms restart the numbering and are labelled as items.
+   In RBI Directions, lettered sub-sections ("B.1 Reset of interest rates under … (MCLR)
+   system", "B.2 … under External Benchmarks") are tracked too: a chunk never mixes two
+   sub-sections, and the sub-section appears in the passage label the model sees, because it
+   often says which products or benchmarks a rule covers.
    Each chunk carries the nearest heading and a label such as `paras 15–17`,
    `section 2 (contd.)`, `rule 162` or `item 4`. Indian amounts whose separators were scanned
    as dots ("1,00.00.000") are repaired, and the ₹ sign is restored where a PDF font extracts
@@ -58,7 +62,11 @@ sets, are listed in the `aliases` column of `tax_catalog.csv`.
    41/2022", "Act 22 of 2015") strongly favours the document with that identifier, and for RBI
    a question about NBFCs or about banks favours the matching set of Directions.
 5. **Passages.** Each requested document gets its best passage first, then remaining slots
-   (8 by default, 10 maximum) go by relevance.
+   (8 by default, 10 maximum) go by relevance. When one of the top two passages belongs to
+   a topic split into at most four parallel sub-sections (such as MCLR vs external
+   benchmarks), the opening of each sibling sub-section is added beside it (at most two
+   additions, never displacing the top five), so the model can see which rule covers which
+   product.
 6. **Status.** Effective dates come only from the catalog. `../data/RBI/catalog_overrides.csv`
    corrects the frozen manifest using each Direction's own commencement clause. For example,
    files 01, 02, 03 and 04 take effect on 1 April 2027, and file 15 (IRACP Directions, 2025)

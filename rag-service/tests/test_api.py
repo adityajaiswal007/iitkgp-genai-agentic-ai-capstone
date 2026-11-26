@@ -103,3 +103,26 @@ def test_api_key_is_enforced_when_configured(settings, retriever):
 def test_chunk_search_endpoint_for_evaluation(client):
     body = client.post("/v1/search_chunks", json={"query": "Special Court Coimbatore", "authority": "TAX", "top_k": 3}).json()
     assert len(body["hits"]) == 3 and body["hits"][0]["document_id"] == "tax-notification-41-2022"
+
+
+def test_sibling_sub_sections_are_fetched_together(settings, retriever):
+    # When one sub-section is retrieved, its parallel sub-sections come with it, so the
+    # model can see which rule covers which product (MCLR vs external benchmark).
+    from regassist_rag.chunking import Chunk
+    r = retriever
+    doc = next(iter(r.doc_chunks))
+    base = r.doc_chunks[doc][0]
+    saved = (list(r.chunks), dict(r.doc_chunks))
+    try:
+        b1 = Chunk("x:b1", doc, "RBI", 1, 900, "para 36", "", "36. one year or lower", "B.1 Reset under MCLR")
+        b2 = Chunk("x:b2", doc, "RBI", 1, 901, "para 38", "", "38. three months", "B.2 Reset under External Benchmarks")
+        r.chunks.extend([b1, b2])
+        i1, i2 = len(r.chunks) - 2, len(r.chunks) - 1
+        r.doc_chunks[doc] = r.doc_chunks[doc] + [i1, i2]
+        result = r._add_sibling_subsections([i1, base], limit=8)
+        assert result[:2] == [i1, i2]
+        assert r._add_sibling_subsections([base], limit=8) == [base]  # no sub-section, nothing added
+    finally:
+        r.chunks[:] = saved[0]
+        r.doc_chunks.clear()
+        r.doc_chunks.update(saved[1])
