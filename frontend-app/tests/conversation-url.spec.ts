@@ -172,9 +172,8 @@ test("new conversation gets its URL before inference finishes", async ({
   const api = await mockChats(page, { holdReply: true });
   await page.goto("/");
   await page.getByRole("button", { name: "Start a new conversation" }).click();
-  await page
-    .getByRole("textbox", { name: "Message RBI/SEBI Copilot" })
-    .fill("Start a saved chat");
+  const input = page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" });
+  await input.fill("Start a saved chat");
   const sent = page.waitForRequest(
     (request) =>
       request.method() === "POST" && request.url().endsWith("/messages"),
@@ -183,6 +182,7 @@ test("new conversation gets its URL before inference finishes", async ({
   await sent;
   try {
     await expect.poll(() => selectedId(page)).toBe(createdId);
+    await expect(input).toHaveValue("");
   } finally {
     api.releaseReply();
   }

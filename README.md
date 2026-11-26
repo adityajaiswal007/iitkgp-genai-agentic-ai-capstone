@@ -212,12 +212,8 @@ This repository documents coursework and capstone development for the programme.
 (cd rag-service && docker compose up -d --build --wait)
 
 # 2. Agent orchestrator on port 8000, using real RAG and Qwen
-(cd agent-orchestrator && \
-  docker build --target api-qwen \
-    --secret id=build_ca_bundle,src=../rag-service/certificate/build-ca.pem \
-    -t regulatory-agent:api-qwen . && \
-  RAG_BASE_URL=http://host.docker.internal:8002 \
-    docker compose -f compose.yaml -f compose.qwen.yaml up -d --no-build --wait)
+RAG_BASE_URL=http://host.docker.internal:8002 \
+  docker compose -f compose.yaml -f compose.qwen.yaml up -d --no-build --wait
 
 # 3. Frontend on port 3000 and backend API on port 3001
 (cd frontend-app && docker compose --profile app up -d --build --wait)

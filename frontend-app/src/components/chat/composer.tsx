@@ -62,11 +62,13 @@ export function Composer({ busy, ready, onSend, onStop }: Props) {
     if ((!draft.trim() && !files.length) || busy || !ready) return;
     const submitted = draft;
     const submittedFiles = files;
+    setDraft("");
     setFileError("");
-    void onSend(submitted, files).then((sent) => {
+    void onSend(submitted, submittedFiles).then((sent) => {
       if (sent) {
-        setDraft((current) => (current === submitted ? "" : current));
         setFiles((current) => (current === submittedFiles ? [] : current));
+      } else {
+        setDraft((current) => current || submitted);
       }
       input.current?.focus();
     });
