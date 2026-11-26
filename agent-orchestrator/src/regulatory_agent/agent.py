@@ -22,6 +22,12 @@ ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI, SEBI and
 TOOL_CHAIN = list(TOOL_SCHEMAS)
 
 
+
+def _comparable(text):
+    """Lower-case words and numbers only, so 'External-Benchmark-Linked Loan' matches
+    'external benchmark linked loan' when checking a referent against the conversation."""
+    return ' '+' '.join(re.findall(r'[a-z0-9]+', text.casefold()))+' '
+
 class RegulatoryAgent:
     """Single-process notebook service. One active request per conversation at a time."""
     def __init__(self, model, tools, db_path='agent_state.sqlite', limits=None):
@@ -199,9 +205,13 @@ class RegulatoryAgent:
             resolved = self.model_json(s, 'contextualizer', {
                 'question':s['question'], 'messages':messages, 'summary':s['summary'],
             }, ContextResolution)
-            referents = list(dict.fromkeys(resolved.referents))
-            prior_answers = '\n'.join(m['content'] for m in s['messages'] if m['role']=='assistant').casefold()
-            if any(contains_private_value(name) or name.casefold() not in prior_answers for name in referents):
+            # Terms the user wrote in this question are not references to the conversation,
+            # even if the model lists them; only the remaining referents must be verified.
+            question_text = _comparable(s['question'])
+            referents = [name for name in dict.fromkeys(resolved.referents)
+                         if _comparable(name) and _comparable(name) not in question_text]
+            prior_answers = _comparable('\n'.join(m['content'] for m in s['messages'] if m['role']=='assistant'))
+            if any(contains_private_value(name) or _comparable(name) not in prior_answers for name in referents):
                 raise ControlledStop('INVALID_CONTEXT', 'Could not verify the referenced entities in this conversation.')
             # Preserve the user's request verbatim; bind identities without letting a rewrite
             # change the requested attribute or narrow a plural reference to a single region.

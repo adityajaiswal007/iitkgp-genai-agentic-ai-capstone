@@ -158,3 +158,36 @@ def test_checkpoint_summary_bounds_context_on_an_ordinary_followup(tmp_path):
         assert len(state['messages']) == 10
     finally:
         agent.close()
+
+
+def test_terms_from_the_question_itself_are_not_treated_as_unverified_references(tmp_path):
+    # Qwen3-8B sometimes lists terms from a self-contained question as "referents".
+    # They are the user's own words, so they must not trigger INVALID_CONTEXT.
+    model = ScriptedModel({'contextualizer':[{'referents':['RBI Complaint-Workflow', 'complaint workflow']}]})
+    agent = RegulatoryAgent(model, CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
+    try:
+        state = agent.ask('chat', 'What does the RBI complaint workflow say?', messages=[
+            {'role':'user','content':'What are the CBDT appeal limits?'},
+            {'role':'assistant','content':'The circular sets monetary limits for departmental appeals.'},
+        ])
+        assert state['status'] == 'answered'
+        assert not any(e.get('code') == 'INVALID_CONTEXT' for e in state['trace'])
+        assert state['resolved_question'] == 'What does the RBI complaint workflow say?'
+    finally:
+        agent.close()
+
+
+def test_references_must_still_come_from_earlier_answers(tmp_path):
+    # A referent that is neither in the question nor in an earlier answer is still refused,
+    # even when it shares a word with the question.
+    model = ScriptedModel({'contextualizer':[{'referents':['complaint against Alex Morgan']}]})
+    agent = RegulatoryAgent(model, CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
+    try:
+        state = agent.ask('chat', 'What happens to that complaint?', messages=[
+            {'role':'user','content':'Tell me about complaints.'},
+            {'role':'assistant','content':'Complaints follow the RBI workflow.'},
+        ])
+        assert state['status'] == 'abstained'
+        assert any(e.get('code') == 'INVALID_CONTEXT' for e in state['trace'])
+    finally:
+        agent.close()

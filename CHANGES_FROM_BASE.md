@@ -19,6 +19,8 @@ This workspace starts from the `agent-orchestrator` branch. Everything below is 
 | --- | --- |
 | `src/regulatory_agent/contracts.py` | `Regulator` now allows `TAX` alongside `RBI` and `SEBI`. Search arguments, passages and conversation summaries accept it. |
 | `src/regulatory_agent/prompts/planner.md` | Routing rule for income-tax and direct-tax questions; keep instrument and section numbers exact and never map 1961-Act sections to the 2025 Act; GST and other indirect taxes are out of scope; personal tax computation, regime choice and planning are personal advice; concealment is rule evasion. `BOTH` is defined as RBI plus SEBI. |
+| `src/regulatory_agent/prompts/planner.md` (clarification) | RBI topics include loans, lending, interest rates and deposits. Clarify only for a fact about the user's situation that changes the answer; never ask which regulation or document applies, since finding it is the search's job. |
+| `src/regulatory_agent/prompts/critic.md` | Never ask which regulation or document applies; request a planner revision instead. |
 | `src/regulatory_agent/prompts/shared.md` | Assistant scope covers RBI, SEBI and income tax. |
 | `src/regulatory_agent/prompts/executor.md` | Evidence issued under the Income-tax Act, 1961 must be flagged in limitations, using the status reason. |
 | `src/regulatory_agent/prompts/state_summary.md` | Mentions income-tax questions. |
@@ -35,12 +37,13 @@ This workspace starts from the `agent-orchestrator` branch. Everything below is 
 | `tests/test_tracing.py` | New: 7 tests with spans captured in memory (no server needed), covering trace structure, rejection reasons, public traces, the trace-ID header and the showcase script. |
 | `src/regulatory_agent/api.py` (trace links) | Responses carry the trace ID in an `X-Trace-Id` header. With `LANGFUSE_PUBLIC_TRACES=1` each trace is published (viewable by link without a login) and its link is printed in the agent's terminal; `LANGFUSE_PRINT_TRACE_URLS=1` prints links without publishing. |
 | `scripts/trace_showcase.py` | New: runs ten showcase questions in one conversation (one Langfuse session) and writes their trace links to `showcase/<session>.md` for the report. |
+| `src/regulatory_agent/agent.py` (context check) | In a conversation with history, terms the contextualizer returns that appear in the current question are no longer treated as references needing verification; only the other referents must appear in an earlier answer (compared ignoring case, hyphens and spacing). With Qwen3-8B, self-contained questions asked mid-conversation were otherwise stopped with `INVALID_CONTEXT`. Two tests in `tests/test_conversation_context.py`. |
 | `src/regulatory_agent/attachments.py` (Windows fix) | The attachment-extraction subprocess now runs with UTF-8 input and output and, on Windows, with `SYSTEMROOT` and the temp folder in its environment. Before, on Windows it could fail to start, and could not return text containing ₹ or Devanagari. |
 | `tests/test_prompt_workflow.py`, `tests/test_agent.py`, `tests/test_qwen_tls.py` (Windows fix) | Read and write test files as UTF-8, so the tests pass on Windows. |
 | `scripts/debug_query.py` | New: runs one question through the agent and prints the evidence labels, the draft claims and the revision feedback text, which the API reports only as counts. |
 | `tests/test_tax_authority.py` | New: 11 tests for the contract, routing, refusals, `BOTH`, tax uploads and lakh/crore amounts. |
 
-All 130 original agent tests still pass (148 with the new ones).
+All 130 original agent tests still pass (150 with the new ones).
 
 ## Not changed
 
