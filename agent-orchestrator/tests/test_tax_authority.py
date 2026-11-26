@@ -1,4 +1,4 @@
-"""Income-tax (TAX) authority: contract, routing, refusals and uploads."""
+"""Scope restrictions and Indian-number grounding."""
 import pytest
 from pydantic import ValidationError
 
@@ -17,28 +17,27 @@ def execute(tmp_path, question, **kwargs):
         agent.close()
 
 
-def test_contract_accepts_tax_and_still_rejects_unknown_authorities():
-    CatalogSearchArgs.model_validate({'query': 'monetary limits', 'authority': 'TAX'})
-    Passage.model_validate({
-        'citation_id': 'tax-circular-3-2018:p1:c0', 'document_id': 'tax-circular-3-2018', 'authority': 'TAX',
-        'title': 'CBDT Circular No. 3/2018', 'text': 'Monetary limits ...', 'page': 1, 'section': 'page 1',
-        'source_url': 'urn:regassist:tax:tax-circular-3-2018#page=1', 'corpus_snapshot': 'test'})
-    StateSummary.model_validate({'authority': 'TAX'})
+def test_agent_contract_rejects_tax():
     with pytest.raises(ValidationError):
-        CatalogSearchArgs.model_validate({'query': 'x', 'authority': 'IRDAI'})
+        CatalogSearchArgs.model_validate({'query': 'monetary limits', 'authority': 'TAX'})
+    with pytest.raises(ValidationError):
+        Passage.model_validate({
+            'citation_id':'legacy:p1', 'document_id':'legacy', 'authority':'TAX',
+            'title':'Legacy circular', 'text':'Monetary limits', 'page':1, 'section':'page 1',
+            'source_url':'urn:test:legacy', 'corpus_snapshot':'test',
+        })
+    with pytest.raises(ValidationError):
+        StateSummary.model_validate({'authority':'TAX'})
 
 
-def test_income_tax_question_is_answered_from_tax_evidence(tmp_path):
+def test_direct_tax_question_is_refused_without_retrieval(tmp_path):
     state = execute(tmp_path, 'What monetary limits does the CBDT circular set for departmental appeals?')
-    assert state['plan']['authority'] == 'TAX'
-    assert state['status'] == 'answered'
-    assert {source['authority'] for source in state['answer']['sources']} == {'TAX'}
-    assert [e['name'] for e in state['trace'] if e['kind'] == 'tool'] == [
-        'search_documents', 'fetch_passages', 'lookup_document_status']
+    assert state['status'] == 'refused'
+    assert not any(event['kind']=='tool' for event in state['trace'])
 
 
 @pytest.mark.parametrize('question,category', [
-    ('How much income tax will I pay on my FD interest?', 'personal_advice'),
+    ('How much income tax will I pay on my FD interest?', 'out_of_scope'),
     ('Should I choose the old or new regime for my salary?', 'personal_advice'),
     ('Can I claim GST input tax credit on office rent?', 'out_of_scope'),
 ])
@@ -55,12 +54,12 @@ def test_both_still_means_rbi_and_sebi(tmp_path):
     assert {source['authority'] for source in state['answer']['sources']} == {'RBI', 'SEBI'}
 
 
-def test_tax_uploads_count_as_regulatory_evidence():
-    assert regulators_in('Central Board of Direct Taxes Circular No. 17/2019') == {'TAX'}
-    assert regulators_in('Income-tax Act, 1961 section 143(2)') == {'TAX'}
+def test_tax_uploads_are_out_of_scope():
+    assert regulators_in('Central Board of Direct Taxes Circular No. 17/2019') == set()
+    assert regulators_in('Income-tax Act, 1961 section 143(2)') == set()
     upload = {'document_id': 'upload-1', 'authority': 'UPLOAD', 'title': 'circular.pdf',
               'text': 'CBDT circular on monetary limits for appeals'}
-    assert regulatory_uploads([upload]) == [upload]
+    assert regulatory_uploads([upload]) == []
 
 
 @pytest.mark.parametrize('claim,passage', [

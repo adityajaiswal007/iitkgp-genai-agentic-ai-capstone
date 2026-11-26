@@ -17,7 +17,7 @@ from .models import REFUSAL_MESSAGES, ROLE_OUTPUT_TOKENS, build_messages, histor
 from .grounding import (catalog_statuses, contains_private_value, label_evidence, numbers,
                         redact, regulatory_uploads)
 
-ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI, SEBI and income-tax evidence.'
+ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI and SEBI evidence.'
 TOOL_CHAIN = list(TOOL_SCHEMAS)
 
 
@@ -212,12 +212,12 @@ class RegulatoryAgent:
                 'remaining_attempts':self.limits.max_steps-s['steps']}, Plan)
             if plan.action != 'answer':
                 message = (REFUSAL_MESSAGES[plan.refusal_category or 'out_of_scope'] if plan.action == 'refuse'
-                           else redact(plan.message.strip()) or 'Which RBI, SEBI or income-tax rule or entity do you mean?')
+                           else redact(plan.message.strip()) or 'Which RBI or SEBI rule or entity do you mean?')
                 s.update(plan={'action':plan.action}, status='clarify' if plan.action=='clarify' else 'refused',
                          route='finish', answer={'claims':[], 'limitations':[], 'message':message})
                 return s
             if plan.authority == 'UPLOAD' and not s['attachment_passages']:
-                raise ControlledStop('INVALID_PLAN', 'No RBI, SEBI or income-tax attachment evidence is available.')
+                raise ControlledStop('INVALID_PLAN', 'No RBI or SEBI attachment evidence is available.')
             if not plan.authority or not plan.query.strip() or plan.refusal_category:
                 raise ControlledStop('INVALID_PLAN', 'Planner did not supply a valid authority and search query.')
             plan.query = redact(plan.query.strip())
@@ -287,7 +287,10 @@ class RegulatoryAgent:
                         fetch_query = query
                     break
         if not ids:
-            raise ControlledStop('RETRIEVAL_MISS', 'No matching documents in this corpus snapshot.')
+            scope = 'RBI or SEBI' if authority=='BOTH' else authority
+            message = ('No matching passages were found in the conversation attachments.' if authority=='UPLOAD'
+                       else f'No matching {scope} documents were found in the retrieval corpus.')
+            raise ControlledStop('RETRIEVAL_MISS', message)
         return ids, fetch_query
 
     def retrieve(self, s):
@@ -326,8 +329,12 @@ class RegulatoryAgent:
 
     def review_context(self, s):
         evidence, _ = label_evidence(s['evidence'], s['document_status'])
+        applicable = {item['document_id'] for item in s['document_status'] if item['status']=='applicable'}
+        supported = {passage['authority'] for passage in evidence if passage['document_id'] in applicable}
+        missing = sorted({'RBI', 'SEBI'} - supported) if s['plan']['authority']=='BOTH' else []
         return {
             'question':self.model_question(s),
+            'unavailable_authorities':missing,
             'messages':[] if s['current_attachment_ids'] or s['summary'] else s['messages'],
             'authority':s['plan']['authority'], 'as_of':s['as_of'], 'fiscal_year':s['fiscal_year'],
             'evidence':evidence, 'document_status':s['document_status'], 'uploaded_files':self.upload_catalog(s),
@@ -339,11 +346,17 @@ class RegulatoryAgent:
                 self.retrieve(s)
             applicable = {d['document_id'] for d in s['document_status'] if d['status']=='applicable'}
             if not any(p['document_id'] in applicable for p in s['evidence']):
-                raise ControlledStop('APPLICABILITY_UNKNOWN', 'No evidence is verified applicable to the supplied date.')
+                raise ControlledStop('APPLICABILITY_UNKNOWN', 'No retrieved documents were verified applicable on the requested date.')
+            context = self.review_context(s)
             draft = self.model_json(s, 'executor', {
-                **self.review_context(s), 'assumptions':s['plan']['assumptions'],
+                **context, 'assumptions':s['plan']['assumptions'],
                 'feedback':s['feedback'], 'previous_draft':s['draft'] if s['revise_target']=='executor' else {},
             }, Draft)
+            if draft.answer_status=='partial' and context['unavailable_authorities']:
+                authority = ' or '.join(context['unavailable_authorities'])
+                limitation = f'No applicable {authority} documents were available for this comparison.'
+                if limitation not in draft.limitations:
+                    draft.limitations = [*draft.limitations[:5], limitation]
             private_output = any(contains_private_value(claim.text) for claim in draft.claims)
             s.update(draft=redact(draft.model_dump()), private_output=private_output, route='critic')
             return s
@@ -416,7 +429,7 @@ class RegulatoryAgent:
             if verdict.decision=='clarify':
                 s.update(status='clarify', route='finish', answer={
                     'claims':[], 'limitations':[], 'message':redact(verdict.clarification_question.strip())
-                    or 'Which RBI, SEBI or income-tax rule, date or type of entity should I use?'})
+                    or 'Which RBI or SEBI rule, date or type of entity should I use?'})
                 return s
             if (verdict.decision=='revise' or issues) and s['revision'] < self.limits.max_revisions:
                 target = verdict.revise_target or ('executor' if issues else 'planner')
@@ -473,6 +486,8 @@ class RegulatoryAgent:
             prior_messages = redact(previous.get('messages', history_messages(history)))
             transcript = redact(messages) if messages is not None else prior_messages
             summary = previous.get('summary', {}) if transcript == prior_messages else {}
+            if summary.get('authority') not in (None, 'RBI', 'SEBI', 'BOTH'):
+                summary = {}
             uploads = regulatory_uploads(attachment_passages if attachment_passages is not None
                                          else previous.get('attachment_passages', []))
             current_ids = set(current_attachment_ids or ())

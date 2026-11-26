@@ -71,3 +71,23 @@ def test_orchestrator_uses_remote_catalog_and_passes_fetch_query(tmp_path, autho
             assert text in data['answer_text']
             assert client.get('/health').json()['corpus'] == 'retrieval'
     assert paths == ['search_documents','fetch_passages','lookup_document_status']
+
+
+
+def test_empty_sebi_catalog_reports_missing_documents(tmp_path):
+    from regulatory_agent.agent import RegulatoryAgent
+    from regulatory_agent.models import DemoModel
+
+    def search(request):
+        assert request.url.path == '/v1/tools/search_documents'
+        return httpx.Response(200, json={'hits':[]})
+
+    with httpx.Client(transport=httpx.MockTransport(search)) as client:
+        adapter = HttpCorpusTools('http://localhost:8001', client=client)
+        agent = RegulatoryAgent(DemoModel(), adapter, tmp_path/'missing.sqlite')
+        try:
+            state = agent.ask('sebi-missing', 'What does SEBI say about trading windows?')
+        finally:
+            agent.close()
+    assert state['status'] == 'abstained'
+    assert state['answer']['limitations'] == ['No matching SEBI documents were found in the retrieval corpus.']

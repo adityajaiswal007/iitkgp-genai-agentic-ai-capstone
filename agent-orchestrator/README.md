@@ -59,8 +59,8 @@ Qwen tokenizer. For hosted Qwen, use the Qwen Compose override to build the `api
 
 ```sh
 cp .env.example .env
-# Fill QWEN_API_KEY first. This starts mock retrieval and mounts the configured CA.
-docker compose -f compose.yaml -f compose.retrieval.yaml -f compose.qwen.yaml up --build
+# Fill QWEN_API_KEY first. This starts real retrieval and mounts the configured CA.
+docker compose -f compose.yaml -f compose.rag.yaml -f compose.qwen.yaml up --build
 ```
 
 - Swagger UI: http://localhost:8000/docs
@@ -334,6 +334,21 @@ checkpoints may remain in SQLite. Automatic crash replay of in-flight paid calls
 - [FastAPI application lifespan](https://fastapi.tiangolo.com/advanced/events/)
 - [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/)
 
+
+## Use the real document retrieval API
+
+Run `docker compose -f compose.yaml -f compose.rag.yaml -f compose.qwen.yaml up --build`
+from this directory. The agent waits for the RAG service index and connects to
+`http://retrieval:8001` over the Compose network. For a host run, start the RAG service
+separately and set `RAG_BASE_URL=http://127.0.0.1:8002`. Docker publishes the real service on host
+port 8002. If you configure `RAG_API_KEY`,
+use the same value in both environment files.
+
+The three existing tools search for documents, fetch passages and check applicability on the
+requested date. The agent accepts RBI and SEBI questions. The real index supplies RBI evidence
+today and returns no SEBI matches. A SEBI-only miss produces a document-unavailable response.
+A comparison can cite the supported side and report the missing side when the evidence supports
+a partial answer.
 
 ## Use the mock document retrieval API
 

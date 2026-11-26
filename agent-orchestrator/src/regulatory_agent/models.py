@@ -17,8 +17,8 @@ EXAMPLES = json.loads(PROMPT_FILES.joinpath('examples.json').read_text(encoding=
 ROLE_OUTPUT_TOKENS = {'planner':450, 'executor':900, 'critic':500, 'state_summary':350}
 REVIEW_FIELDS = ('relevance', 'factual_support', 'citation_support', 'completeness', 'applicability')
 REFUSAL_MESSAGES = {
-    'out_of_scope': 'I can answer general questions about RBI and SEBI regulations and the income-tax documents in my corpus.',
-    'personal_advice': 'I can explain the general RBI, SEBI or income-tax rules. For advice about your situation, consult a qualified professional.',
+    'out_of_scope': 'I can answer general questions about RBI and SEBI regulations.',
+    'personal_advice': 'I can explain the general RBI or SEBI rules. For advice about your situation, consult a qualified professional.',
     'action_request': 'I can explain the regulatory procedure. This assistant is read-only.',
     'personal_data': 'Remove private identifiers and ask the general regulatory question again.',
     'rule_evasion': 'I can explain what the regulation requires and how to comply.',
@@ -42,8 +42,6 @@ class DemoModel:
             limitations = ['Fictional demonstration corpus; not actual regulatory guidance.'] if any(
                 p['corpus_snapshot'].startswith('synthetic') for p in payload['evidence']
             ) else []
-            if partial:
-                limitations.append('The available evidence covers only one of the requested regulators.')
             result = {'claims': claims, 'limitations': limitations,
                       'answer_status': ('partial' if partial else 'answered') if claims else 'not_found'}
         elif role == 'critic':
@@ -73,11 +71,13 @@ class DemoModel:
         elif {'RBI', 'SEBI'} <= regulators:
             authority = 'BOTH'  # BOTH means RBI and SEBI together
         else:
-            authority = next((r for r in ('RBI', 'SEBI', 'TAX') if r in regulators), None)
+            authority = next((r for r in ('RBI', 'SEBI') if r in regulators), None)
         refusal = None
         if re.search(r'\b(?:their|his|her|my)\s+(?:email(?: address)?|phone(?: number)?|aadhaar|pan|account number)\b', text):
             refusal = 'personal_data'
-        elif re.search(r'\b(?:irdai|pfrda|gst|cgst|stock market poem|write me a poem)\b', text):
+        elif re.search(r'\b(?:irdai|pfrda|gst|cgst|stock market poem|write me a poem)\b', text) or (
+            not regulators and re.search(r'\b(?:income[- ]tax|direct[- ]tax|cbdt|central board of direct taxes|itat|tax tribunal|vivad se vishwas)\b', text)
+        ):
             refusal = 'out_of_scope'
         elif re.search(r'\bhow much (?:income[- ])?tax (?:will|should|do) i\b|\b(?:my|our) tax (?:liability|return|refund)\b|'
                        r'\bold or new (?:tax )?regime\b', text):
@@ -97,20 +97,17 @@ class DemoModel:
                 authority = 'RBI'
             elif re.search(r'\b(?:insider trading|stockbroker|listed company|mutual fund)\b', text):
                 authority = 'SEBI'
-            elif re.search(r'\b(?:income[- ]tax|cbdt|itat|tax tribunal|black money|vivad se vishwas|'
-                           r'faceless (?:assessment|appeal)|assessing officer|departmental appeals?)\b', text):
-                authority = 'TAX'
         if not authority and not file_question:
             prior = payload.get('summary', {}).get('authority')
             history = payload.get('history', [])
             prior = prior or (history[-1].get('authority') if history else None)
-            if prior in ('RBI', 'SEBI', 'TAX', 'BOTH', 'UPLOAD'):
+            if prior in ('RBI', 'SEBI', 'BOTH', 'UPLOAD'):
                 authority = prior
         if file_question and not files:
             return {'action':'refuse', 'refusal_category':'out_of_scope'}
         if not authority:
             if re.search(r'\b(?:what|which|how|is|does)\b.*\b(?:limit|allowed|follow-up|circular|rule)\b', text):
-                return {'action':'clarify', 'message':'Which RBI, SEBI or income-tax regulation or entity do you mean?'}
+                return {'action':'clarify', 'message':'Which RBI or SEBI regulation or entity do you mean?'}
             return {'action':'refuse', 'refusal_category':'out_of_scope'}
         return {'action':'answer', 'query':question[:1500], 'authority':authority}
 

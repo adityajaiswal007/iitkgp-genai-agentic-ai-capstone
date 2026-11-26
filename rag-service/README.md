@@ -1,7 +1,7 @@
 # RegAssist retrieval service
 
 Hybrid retrieval over the RBI Directions and the income-tax corpus. It replaces the mock
-retrieval API: it serves the same three tool endpoints on the same port (8001), so the
+retrieval API: it serves the same three tool endpoints on host port 8002, so the
 agent orchestrator connects to it without code changes.
 
 | Endpoint | Purpose |
@@ -80,12 +80,12 @@ python3.12 -m venv .venv
 .venv/bin/pip install -e '.[test,ocr]'
 cp .env.example .env            # optional: embedding/rerank settings
 .venv/bin/python -m regassist_rag.build_index          # optional; the API builds on first start
-.venv/bin/python -m uvicorn regassist_rag.api:app --env-file .env --host 127.0.0.1 --port 8001
+.venv/bin/python -m uvicorn regassist_rag.api:app --env-file .env --host 127.0.0.1 --port 8002
 ```
 
 Building the BM25 index takes about 15 seconds. Then start the agent exactly as the root
 README describes, but skip the mock retrieval step: `agent-orchestrator/.env` already points
-`RAG_BASE_URL` at `http://127.0.0.1:8001`.
+`RAG_BASE_URL` at `http://127.0.0.1:8002`.
 
 ## Run with Docker
 
@@ -94,12 +94,13 @@ cd rag-service
 docker compose up -d --build
 ```
 
-For the agent in Docker, start it **without** `compose.retrieval.yaml` (that file starts the
-mock on the same port) and point it at this service:
+To connect a Docker agent to a separately running RAG service, start the agent with the base
+Compose file and the Qwen override. The mock override points to the synthetic service on host
+port 8001. The standalone real service on port 8002 can run alongside it.
 
 ```bash
 cd agent-orchestrator
-RAG_BASE_URL=http://host.docker.internal:8001 docker compose -f compose.yaml -f compose.qwen.yaml up -d --build
+RAG_BASE_URL=http://host.docker.internal:8002 docker compose -f compose.yaml -f compose.qwen.yaml up -d --build
 ```
 
 ## Dense retrieval and reranking
@@ -148,7 +149,7 @@ Jina-compatible servers).
 
 ```bash
 .venv/bin/python scripts/eval_retrieval.py --label bm25-baseline
-.venv/bin/python scripts/eval_retrieval.py --base-url http://127.0.0.1:8001 --label hybrid
+.venv/bin/python scripts/eval_retrieval.py --base-url http://127.0.0.1:8002 --label hybrid
 ```
 
 The script runs every answerable gold question from both sets with the question as the query
@@ -184,13 +185,11 @@ The tests build a small index from real corpus files. `test_agent_compatibility.
 agent's own `HttpCorpusTools` adapter and schemas against this service. Dense and rerank
 paths are tested against fake servers.
 
-## Agent support for tax documents
+## Agent integration scope
 
-The agent orchestrator accepts the `TAX` authority (see `../CHANGES_FROM_BASE.md`): its
-planner routes income-tax questions to `TAX`, and `test_agent_compatibility.py` runs the
-agent's adapter against this service for both RBI and TAX. `BOTH` still means RBI and SEBI
-together; a question spanning RBI and income tax is answered from the authority the planner
-judges primary.
+The orchestrator uses RBI and SEBI. The service's standalone API and evaluation suite also
+cover the team's tax corpus. The orchestrator rejects TAX tool requests at its schema boundary.
+SEBI searches currently return no hits, and the agent reports the missing documents.
 
-SEBI is accepted for contract compatibility but returns no hits, because there are no SEBI
-documents in the corpus.
+To launch the agent and real retrieval in one Compose project, use `compose.rag.yaml`
+alongside the agent's `compose.yaml`. The agent's mock override supports synthetic demos.

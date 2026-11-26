@@ -5,7 +5,7 @@ independently of the language model. Uses the question text as the query
 (the agent's planner may rewrite it, usually for the better).
 
   python scripts/eval_retrieval.py                       # in-process, uses RAG_* env vars
-  python scripts/eval_retrieval.py --base-url http://127.0.0.1:8001   # against a running service
+  python scripts/eval_retrieval.py --base-url http://127.0.0.1:8002   # against a running service
 """
 from __future__ import annotations
 

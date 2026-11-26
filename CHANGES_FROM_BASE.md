@@ -1,6 +1,8 @@
 # Changes from the agent-orchestrator branch
 
-This workspace starts from the `agent-orchestrator` branch. Everything below is new or changed.
+This records the original RAG handoff from the `agent-orchestrator` branch. The current
+orchestrator is scoped to RBI and SEBI and uses `compose.rag.yaml` for real retrieval.
+The tax changes listed below describe the original handoff.
 
 ## New
 
