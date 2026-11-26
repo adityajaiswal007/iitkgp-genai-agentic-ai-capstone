@@ -327,7 +327,7 @@ class AgentTests(unittest.TestCase):
         s = self.agent().ask('t','RBI complaint secret-marker')
         path = Path(self.tmp.name)/'trace.jsonl'
         export_trace(s,path)
-        exported = path.read_text()
+        exported = path.read_text(encoding='utf-8')
         self.assertNotIn('secret-marker',exported)
         self.assertNotIn('fictional demo',exported)
         self.assertTrue(all(json.loads(line) for line in exported.splitlines()))

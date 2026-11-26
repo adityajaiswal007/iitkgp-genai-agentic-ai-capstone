@@ -90,6 +90,10 @@ def main() -> None:
     parser.add_argument("--out-dir", default=str(ROOT / "showcase"))
     parser.add_argument("--dry-run", action="store_true", help="list the questions without running them")
     args = parser.parse_args()
+    # The output includes characters such as ⚠ and …; keep it printable on any Windows console.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     load_dotenv(ROOT / ".env")
     questions = load_questions(args.questions)
 

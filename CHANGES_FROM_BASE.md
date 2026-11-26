@@ -35,6 +35,8 @@ This workspace starts from the `agent-orchestrator` branch. Everything below is 
 | `tests/test_tracing.py` | New: 7 tests with spans captured in memory (no server needed), covering trace structure, rejection reasons, public traces, the trace-ID header and the showcase script. |
 | `src/regulatory_agent/api.py` (trace links) | Responses carry the trace ID in an `X-Trace-Id` header. With `LANGFUSE_PUBLIC_TRACES=1` each trace is published (viewable by link without a login) and its link is printed in the agent's terminal; `LANGFUSE_PRINT_TRACE_URLS=1` prints links without publishing. |
 | `scripts/trace_showcase.py` | New: runs ten showcase questions in one conversation (one Langfuse session) and writes their trace links to `showcase/<session>.md` for the report. |
+| `src/regulatory_agent/attachments.py` (Windows fix) | The attachment-extraction subprocess now runs with UTF-8 input and output and, on Windows, with `SYSTEMROOT` and the temp folder in its environment. Before, on Windows it could fail to start, and could not return text containing ₹ or Devanagari. |
+| `tests/test_prompt_workflow.py`, `tests/test_agent.py`, `tests/test_qwen_tls.py` (Windows fix) | Read and write test files as UTF-8, so the tests pass on Windows. |
 | `scripts/debug_query.py` | New: runs one question through the agent and prints the evidence labels, the draft claims and the revision feedback text, which the API reports only as counts. |
 | `tests/test_tax_authority.py` | New: 11 tests for the contract, routing, refusals, `BOTH`, tax uploads and lakh/crore amounts. |
 

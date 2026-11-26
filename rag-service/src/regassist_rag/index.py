@@ -62,7 +62,7 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
     out.mkdir(parents=True, exist_ok=True)
     info_path = out / "build_info.json"
     if not force and info_path.exists():
-        info = json.loads(info_path.read_text())
+        info = json.loads(info_path.read_text(encoding="utf-8"))
         if info.get("snapshot") == snapshot:
             log.info("Index %s is current", snapshot)
             if settings.dense_enabled:
@@ -95,7 +95,7 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
         "include_out_of_scope": settings.include_out_of_scope,
         "document_ids": sorted(d.document_id for d in docs),
     }
-    info_path.write_text(json.dumps(info, indent=2))
+    info_path.write_text(json.dumps(info, indent=2), encoding="utf-8")
     for stale in out.glob("embeddings*"):
         stale.unlink()
     if settings.dense_enabled:
@@ -148,7 +148,7 @@ def _ensure_embeddings(settings: Settings) -> Path:
     chunks = _load_chunks(settings.index_dir)
     texts = [settings.embedding_document_prefix + embedding_text(c, catalog.get(c.document_id)) for c in chunks]
 
-    dimension = json.loads(meta.read_text())["dimension"] if meta.exists() and partial.exists() else None
+    dimension = json.loads(meta.read_text(encoding="utf-8"))["dimension"] if meta.exists() and partial.exists() else None
     done = partial.stat().st_size // (4 * dimension) if dimension else 0
     if dimension and partial.stat().st_size != done * 4 * dimension:  # torn last write
         with partial.open("r+b") as fh:
@@ -170,7 +170,7 @@ def _ensure_embeddings(settings: Settings) -> Path:
                 vectors = client.embed(texts[start:start + settings.embedding_batch_size]).astype(np.float32)
                 if dimension is None:
                     dimension = vectors.shape[1]
-                    meta.write_text(json.dumps({"dimension": dimension, "model": settings.embedding_model}))
+                    meta.write_text(json.dumps({"dimension": dimension, "model": settings.embedding_model}), encoding="utf-8")
                 out.write(vectors.tobytes())
                 out.flush()
                 done = start + len(vectors)
@@ -202,7 +202,7 @@ class Retriever:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.catalog = Catalog.load(settings.data_dir)
-        info = json.loads((settings.index_dir / "build_info.json").read_text())
+        info = json.loads((settings.index_dir / "build_info.json").read_text(encoding="utf-8"))
         self.snapshot = info["snapshot"]
         self.info = info
         self.indexed_ids = set(info["document_ids"])

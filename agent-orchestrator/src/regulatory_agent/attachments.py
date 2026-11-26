@@ -41,6 +41,22 @@ class UploadedFile(BaseModel):
         return value
 
 
+
+def _extractor_env():
+    """Minimal environment for the extraction subprocess (no API keys or secrets).
+
+    UTF-8 is forced for its input and output, because Windows otherwise uses a legacy
+    code page that cannot represent ₹ or Devanagari text. Windows also needs SYSTEMROOT
+    (and a temp folder for OCR) for a Python subprocess to start.
+    """
+    env = {'PATH': os.environ.get('PATH', os.defpath), 'LANG': 'C.UTF-8', 'OMP_THREAD_LIMIT': '1',
+           'PYTHONUTF8': '1', 'PYTHONIOENCODING': 'utf-8'}
+    if os.name == 'nt':
+        for name in ('SYSTEMROOT', 'SystemRoot', 'TEMP', 'TMP', 'PATHEXT', 'COMSPEC'):
+            if os.environ.get(name):
+                env[name] = os.environ[name]
+    return env
+
 def extract_attachments(files):
     decoded, total = [], 0
     for file in files:
@@ -68,8 +84,8 @@ def extract_attachments(files):
                 raise TimeoutError()
             result = subprocess.run([sys.executable, '-m', 'regulatory_agent.attachment_extract'],
                 input=json.dumps({'content_base64':file.content_base64, 'mime_type':file.mime_type}),
-                text=True, capture_output=True, timeout=timeout, check=True,
-                env={'PATH':os.environ.get('PATH',os.defpath), 'LANG':'C.UTF-8', 'OMP_THREAD_LIMIT':'1'})
+                text=True, encoding='utf-8', capture_output=True, timeout=timeout, check=True,
+                env=_extractor_env())
             pages = json.loads(result.stdout)
             if 'error' in pages:
                 raise AttachmentError(file.name+': '+pages['error'])

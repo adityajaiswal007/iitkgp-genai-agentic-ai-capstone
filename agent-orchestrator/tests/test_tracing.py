@@ -130,5 +130,6 @@ def test_showcase_script_lists_its_questions():
     import subprocess
     import sys
     out = subprocess.run([sys.executable, "scripts/trace_showcase.py", "--dry-run"],
-                         capture_output=True, text=True, check=True).stdout
+                         capture_output=True, text=True, encoding="utf-8", check=True,
+                         env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"}).stdout
     assert out.count("\n") == 10 and "Prompt-injection" in out and "expect: refused" in out
