@@ -1,0 +1,14 @@
+# Use with compose.yaml. For the synthetic service, use compose.retrieval.yaml instead.
+services:
+  agent:
+    environment:
+      RAG_BASE_URL: http://retrieval:8001
+    depends_on:
+      retrieval:
+        condition: service_healthy
+  retrieval:
+    extends:
+      file: ../rag-service/compose.yaml
+      service: retrieval
+volumes:
+  rag-index:

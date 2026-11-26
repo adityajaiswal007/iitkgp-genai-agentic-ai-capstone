@@ -1,0 +1,21 @@
+name: rbi-sebi-copilot
+
+# Reuse the backend's services, credentials, and existing PostgreSQL volume.
+include:
+  - path: ../backend-app/compose.yaml
+    project_directory: ../backend-app
+    env_file: ../backend-app/.env
+
+services:
+  frontend:
+    image: rbi-sebi-copilot-frontend:latest
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:3001/api}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

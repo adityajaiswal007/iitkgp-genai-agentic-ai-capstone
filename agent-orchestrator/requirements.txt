@@ -1,0 +1,2 @@
+# Install the Python service, editable for local development.
+-e .

@@ -1,0 +1,24 @@
+# docker compose -f compose.yaml -f compose.retrieval.yaml up --build
+services:
+  agent:
+    environment:
+      RAG_BASE_URL: http://retrieval:8001
+      RAG_API_KEY: ${RAG_API_KEY:-}
+    depends_on:
+      retrieval:
+        condition: service_healthy
+  retrieval:
+    build:
+      context: .
+      target: api-demo
+    command: ["python", "-m", "uvicorn", "regulatory_agent.mock_retrieval:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      RAG_API_KEY: ${RAG_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 4
+      start_period: 5s

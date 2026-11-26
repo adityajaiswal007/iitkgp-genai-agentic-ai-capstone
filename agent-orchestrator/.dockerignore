@@ -1,0 +1,18 @@
+# Allowlist: exclude credentials, state, build caches and other project files.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!README.md
+!src/
+!src/regulatory_agent/
+!src/regulatory_agent/*.py
+!src/regulatory_agent/prompts/
+!src/regulatory_agent/prompts/*.md
+!src/regulatory_agent/prompts/*.json
+!tests/
+!tests/*.py
+!tests/fixtures/
+!tests/fixtures/*.jsonl
+!regulatory_agentic_layer_qwen3.ipynb
+!validate_notebook.py

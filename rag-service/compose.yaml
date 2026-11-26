@@ -1,0 +1,24 @@
+# Real retrieval service on 127.0.0.1:8002. Needs Docker Compose 2.24+.
+#   docker compose up -d --build
+# The data folder is mounted read-only; the index lives in a named volume and is
+# rebuilt automatically only when the documents or chunking settings change.
+services:
+  retrieval:
+    build: .
+    image: regassist-rag:latest
+    ports:
+      - "127.0.0.1:8002:8001"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      RAG_DATA_DIR: /data
+      RAG_INDEX_DIR: /index
+    volumes:
+      - ../data:/data:ro
+      - rag-index:/index
+      # Uncomment to trust a private CA for the embedding/rerank server, then set
+      # EMBEDDING_CA_CERT=/certs/embedding.crt in .env:
+      # - ./certificate:/certs:ro
+volumes:
+  rag-index:
