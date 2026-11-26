@@ -86,6 +86,8 @@ def create_app(settings: Settings | None = None, retriever: Retriever | None = N
             "documents": r.info["documents_by_authority"],
             "chunks": len(r.chunks),
             "dense": r.embeddings is not None,
+            "dense_status": r.dense_status,
+            "dense_failures": r.dense_failures,
             "rerank": r.reranker is not None,
         }
 

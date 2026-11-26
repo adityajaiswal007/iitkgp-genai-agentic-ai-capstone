@@ -3,3 +3,6 @@ index/
 __pycache__/
 *.egg-info/
 .env
+# Certificates for private model and embedding servers
+*.crt
+certificate/

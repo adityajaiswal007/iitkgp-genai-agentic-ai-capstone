@@ -104,25 +104,45 @@ RAG_BASE_URL=http://host.docker.internal:8001 docker compose -f compose.yaml -f 
 
 ## Dense retrieval and reranking
 
-Set these in `.env` (see `.env.example`):
+With an embedding server configured, retrieval is hybrid: BM25 and dense similarity are
+fused by reciprocal rank. For the course's shared BGE server, save the certificate as
+`rag-service/certificate/vm02-ca.crt` (Git ignores it) and set in `.env`:
 
 ```dotenv
-EMBEDDING_BASE_URL=https://your-embedding-host:port/v1
-EMBEDDING_MODEL=your-model-name
-EMBEDDING_API_KEY=...
-EMBEDDING_CA_CERT=./certificate/embedding.crt
+EMBEDDING_BASE_URL=https://103.42.50.41:1035/v1
+EMBEDDING_MODEL=bge-small-en-v1.5
+EMBEDDING_API_KEY=your-key
+EMBEDDING_CA_CERT=./certificate/vm02-ca.crt
+EMBEDDING_BATCH_SIZE=16
+EMBEDDING_MAX_TOKENS=512
+EMBEDDING_QUERY_PREFIX="Represent this sentence for searching relevant passages: "
 ```
 
-The `certificate` branch's `embedding.crt` is a Caddy local root CA, which suggests the
-team's embedding server sits behind Caddy; copy it to `rag-service/certificate/` and use the
-path above. The whole corpus (about 12,200 chunks) is embedded once and cached in the index
-folder; it is re-embedded only when the model or documents change. Models that expect
-instruction prefixes (for example e5's `query: ` and `passage: `) can use
-`EMBEDDING_QUERY_PREFIX` and `EMBEDDING_DOCUMENT_PREFIX`.
+How the service uses the server:
 
-A reranker is any endpoint accepting `POST {base}/rerank` with `query`, `documents` and
-`top_n`, returning `results` with `index` and `relevance_score`. vLLM, Text Embeddings
-Inference, Infinity and Jina-compatible servers do this.
+- **Indexing, once.** Every chunk is embedded at the first start, 16 texts per request
+  (about 765 requests for the full corpus). Each text is a short context line (document
+  title and section label) followed by the chunk, trimmed to fit 512 tokens; the server
+  is asked to shorten any text it still finds too long. Capacity errors and network
+  faults are retried with increasing waits. Each batch is saved as it arrives, so an
+  interrupted run resumes where it stopped at the next start. The finished vectors are
+  cached in `index/` and reused until the documents, chunking or model change.
+- **Questions.** Each search query is embedded once (with the BGE query instruction) and
+  compared with every chunk vector by cosine similarity, an exact search with NumPy that
+  takes a few milliseconds for 12,000 vectors. If the embedding server fails during a
+  question, that question uses keyword search alone rather than failing.
+- **Health.** `GET /health` reports `dense` (vectors loaded), `dense_status` (`ready`,
+  `missing` while the corpus is not fully embedded, `degraded` after a failed query
+  embedding, or `off`) and `dense_failures`.
+
+If embedding cannot finish at startup (for example, the server is down), the service
+starts anyway with keyword search and resumes embedding at the next start.
+
+Models that expect instruction prefixes use `EMBEDDING_QUERY_PREFIX` and
+`EMBEDDING_DOCUMENT_PREFIX` (e5: `query: ` and `passage: `). A reranker is any endpoint
+accepting `POST {base}/rerank` with `query`, `documents` and `top_n`, returning `results`
+with `index` and `relevance_score` (vLLM, Text Embeddings Inference, Infinity,
+Jina-compatible servers).
 
 ## Evaluation
 

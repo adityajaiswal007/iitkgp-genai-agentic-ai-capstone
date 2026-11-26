@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+import httpx
 import numpy as np
 
 from .catalog import Catalog, Document
@@ -25,7 +26,7 @@ from .chunking import CHUNKER_VERSION, Chunk, chunk_document
 from .config import Settings
 from .extract import extract_pages
 from .lexical import BM25, tokenize
-from .remote import EmbeddingClient, RerankClient
+from .remote import EmbeddingClient, EmbeddingError, RerankClient
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
         if info.get("snapshot") == snapshot:
             log.info("Index %s is current", snapshot)
             if settings.dense_enabled:
-                _ensure_embeddings(settings)
+                _try_embeddings(settings)
             return info
 
     started = time.time()
@@ -95,11 +96,20 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
         "document_ids": sorted(d.document_id for d in docs),
     }
     info_path.write_text(json.dumps(info, indent=2))
-    for stale in out.glob("embeddings*.npy"):
+    for stale in out.glob("embeddings*"):
         stale.unlink()
     if settings.dense_enabled:
-        _ensure_embeddings(settings)
+        _try_embeddings(settings)
     return info
+
+
+def _try_embeddings(settings: Settings) -> None:
+    """Embedding failures leave the service running on keyword search; the next start resumes."""
+    try:
+        _ensure_embeddings(settings)
+    except Exception as exc:
+        log.error("Could not finish embedding the corpus (%s). Starting with keyword search only; "
+                  "restart later to resume embedding.", exc)
 
 
 def _embedding_path(settings: Settings) -> Path:
@@ -112,21 +122,71 @@ def _load_chunks(index_dir: Path) -> list[Chunk]:
         return [Chunk(**json.loads(line)) for line in fh]
 
 
+def embedding_text(chunk: Chunk, doc: Document) -> str:
+    """What the embedding model sees: a short context line, then the chunk.
+    Kept short because small embedding models read at most 512 tokens."""
+    context = " | ".join(part for part in (doc.title[:160], chunk.section) if part)
+    return f"{context}\n{chunk.text}"
+
+
+def embedding_client(settings: Settings, timeout: float) -> EmbeddingClient:
+    return EmbeddingClient(settings.embedding_base_url, settings.embedding_model, settings.embedding_api_key,
+                           settings.embedding_ca_cert, settings.embedding_batch_size, timeout=timeout,
+                           max_tokens=settings.embedding_max_tokens)
+
+
 def _ensure_embeddings(settings: Settings) -> Path:
+    """Embed every chunk once. Each batch is appended to a progress file as soon as it
+    returns, so an interrupted run (server at capacity, network drop, Ctrl+C) resumes
+    where it stopped and loses at most one request."""
     path = _embedding_path(settings)
     if path.exists():
         return path
+    partial = path.with_name(path.stem + ".partial.f32")
+    meta = path.with_name(path.stem + ".partial.json")
     catalog = Catalog.load(settings.data_dir)
     chunks = _load_chunks(settings.index_dir)
-    client = EmbeddingClient(settings.embedding_base_url, settings.embedding_model, settings.embedding_api_key,
-                             settings.embedding_ca_cert, settings.embedding_batch_size, timeout=120)
+    texts = [settings.embedding_document_prefix + embedding_text(c, catalog.get(c.document_id)) for c in chunks]
+
+    dimension = json.loads(meta.read_text())["dimension"] if meta.exists() and partial.exists() else None
+    done = partial.stat().st_size // (4 * dimension) if dimension else 0
+    if dimension and partial.stat().st_size != done * 4 * dimension:  # torn last write
+        with partial.open("r+b") as fh:
+            fh.truncate(done * 4 * dimension)
+    if done > len(texts):
+        partial.unlink()
+        meta.unlink()
+        dimension, done = None, 0
+    if done:
+        log.info("Resuming embedding at chunk %d of %d", done, len(texts))
+    else:
+        log.info("Embedding %d chunks with %s (one-time; progress is saved)", len(texts), settings.embedding_model)
+
+    client = embedding_client(settings, timeout=120)
+    started, last_report = time.time(), 0.0
     try:
-        texts = [settings.embedding_document_prefix + index_text(c, catalog.get(c.document_id)) for c in chunks]
-        log.info("Embedding %d chunks with %s", len(texts), settings.embedding_model)
-        matrix = client.embed(texts)
+        with partial.open("ab") as out:
+            for start in range(done, len(texts), settings.embedding_batch_size):
+                vectors = client.embed(texts[start:start + settings.embedding_batch_size]).astype(np.float32)
+                if dimension is None:
+                    dimension = vectors.shape[1]
+                    meta.write_text(json.dumps({"dimension": dimension, "model": settings.embedding_model}))
+                out.write(vectors.tobytes())
+                out.flush()
+                done = start + len(vectors)
+                if time.time() - last_report > 15 or done == len(texts):
+                    last_report = time.time()
+                    log.info("Embedded %d/%d chunks", done, len(texts))
     finally:
         client.close()
+    matrix = np.fromfile(partial, dtype=np.float32).reshape(-1, dimension)
+    if matrix.shape[0] != len(texts):
+        raise RuntimeError(f"Expected {len(texts)} embeddings, found {matrix.shape[0]}")
     np.save(path, matrix)
+    partial.unlink()
+    meta.unlink()
+    log.info("Embeddings ready: %d vectors of %d dimensions in %.0fs", matrix.shape[0], dimension,
+             time.time() - started)
     return path
 
 
@@ -158,16 +218,26 @@ class Retriever:
 
         self.embeddings = None
         self.embedder = None
+        self.dense_status = "off"           # off | ready | missing | degraded
+        self.dense_failures = 0
+        self._query_vectors: dict[str, np.ndarray] = {}
         if settings.dense_enabled:
             path = _embedding_path(settings)
             if not path.exists():
-                raise RuntimeError("Dense retrieval is configured but embeddings are missing; run build_index.")
-            self.embeddings = np.load(path)
-            if self.embeddings.shape[0] != len(self.chunks):
-                raise RuntimeError("Embeddings do not match the chunk index; rebuild with --force.")
-            self.embedder = EmbeddingClient(settings.embedding_base_url, settings.embedding_model,
-                                            settings.embedding_api_key, settings.embedding_ca_cert,
-                                            timeout=settings.request_timeout)
+                log.warning("Dense retrieval is configured but the corpus is not fully embedded yet; "
+                            "using keyword search only until a restart finishes embedding.")
+                self.dense_status = "missing"
+            else:
+                embeddings = np.load(path)
+                if embeddings.shape[0] != len(self.chunks):
+                    raise RuntimeError("Embeddings do not match the chunk index; rebuild with --force.")
+                self.embeddings = embeddings
+                self.dense_status = "ready"
+                # Queries are short and time-sensitive: fewer retries than indexing.
+                self.embedder = EmbeddingClient(settings.embedding_base_url, settings.embedding_model,
+                                                settings.embedding_api_key, settings.embedding_ca_cert,
+                                                timeout=settings.request_timeout,
+                                                max_tokens=settings.embedding_max_tokens, retries=2)
         self.reranker = (RerankClient(settings.rerank_base_url, settings.rerank_model, settings.rerank_api_key,
                                       settings.rerank_ca_cert, settings.request_timeout)
                          if settings.rerank_enabled else None)
@@ -210,8 +280,8 @@ class Retriever:
                 break
             fused[int(idx)] = fused.get(int(idx), 0.0) + 1.0 / (RRF_K + rank + 1)
 
-        if self.embeddings is not None:
-            query_vector = self.embedder.embed([self.settings.embedding_query_prefix + query])[0]
+        query_vector = self._query_vector(query) if self.embeddings is not None else None
+        if query_vector is not None:
             dense = self.embeddings[candidates] @ query_vector
             dense_order = candidates[np.argsort(-dense, kind="stable")]
             for rank, idx in enumerate(dense_order[:DENSE_CANDIDATES]):
@@ -226,6 +296,25 @@ class Retriever:
                 head.sort(key=lambda c: (-c.score, c.index))
                 ranked = head + ranked[len(head):]
         return ranked[:top_k]
+
+    def _query_vector(self, query: str) -> np.ndarray | None:
+        """Embed a query once (search and fetch reuse it). If the embedding server fails,
+        this question falls back to keyword search instead of failing."""
+        cached = self._query_vectors.get(query)
+        if cached is not None:
+            return cached
+        try:
+            vector = self.embedder.embed([self.settings.embedding_query_prefix + query])[0]
+        except (EmbeddingError, httpx.HTTPError) as exc:
+            self.dense_failures += 1
+            self.dense_status = "degraded"
+            log.warning("Query embedding failed (%s); using keyword search for this question", exc)
+            return None
+        self.dense_status = "ready"
+        if len(self._query_vectors) >= 256:
+            self._query_vectors.pop(next(iter(self._query_vectors)))
+        self._query_vectors[query] = vector
+        return vector
 
     # -- agent tool contract -----------------------------------------------
 

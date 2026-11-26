@@ -6,3 +6,6 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 rag-service/index/
+# Certificates for private model and embedding servers
+*.crt
+certificate/

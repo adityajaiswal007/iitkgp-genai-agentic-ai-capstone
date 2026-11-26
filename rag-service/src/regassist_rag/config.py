@@ -34,7 +34,8 @@ class Settings:
     embedding_api_key: str = field(default="", repr=False)
     embedding_model: str = ""
     embedding_ca_cert: str = ""
-    embedding_batch_size: int = 32
+    embedding_batch_size: int = 16
+    embedding_max_tokens: int = 512
     embedding_query_prefix: str = ""
     embedding_document_prefix: str = ""
 
@@ -77,7 +78,8 @@ class Settings:
             embedding_api_key=os.getenv("EMBEDDING_API_KEY", ""),
             embedding_model=os.getenv("EMBEDDING_MODEL", ""),
             embedding_ca_cert=os.getenv("EMBEDDING_CA_CERT", ""),
-            embedding_batch_size=int(os.getenv("EMBEDDING_BATCH_SIZE", "32")),
+            embedding_batch_size=int(os.getenv("EMBEDDING_BATCH_SIZE", "16")),
+            embedding_max_tokens=int(os.getenv("EMBEDDING_MAX_TOKENS", "512")),
             embedding_query_prefix=os.getenv("EMBEDDING_QUERY_PREFIX", ""),
             embedding_document_prefix=os.getenv("EMBEDDING_DOCUMENT_PREFIX", ""),
             rerank_base_url=os.getenv("RERANK_BASE_URL", "").rstrip("/"),
