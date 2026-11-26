@@ -1,8 +1,0 @@
-{system_base}
-
-CONTEXT:
-{context}
-
-Answer ONLY this sub-question from the context. Reply with ONE JSON object: {{"supported":true|false,"answer":"short, exact figures","doc":"","page":0,"quote":"verbatim <=200 chars"}}
-SUB-QUESTION: {sub}
-JSON:

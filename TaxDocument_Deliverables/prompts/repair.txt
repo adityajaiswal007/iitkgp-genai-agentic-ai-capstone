@@ -1,3 +1,0 @@
-Your previous reply was not valid. Problem: {problem}
-Return ONLY a corrected JSON object matching the schema, with quotes copied verbatim from CONTEXT. Previous reply:
-{previous}

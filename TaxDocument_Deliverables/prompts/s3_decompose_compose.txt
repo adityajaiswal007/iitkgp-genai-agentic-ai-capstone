@@ -1,9 +1,0 @@
-{system_base}
-
-Original question: {question}
-Plan flags: {flags}
-Sub-answers (each from context): {subs}
-
-Compose the final reply. If any needed sub-answer is unsupported -> refuse NOT_IN_CORPUS. Use only the sub-answers' quotes as citations. Reply with ONE JSON object matching:
-{schema}
-JSON:

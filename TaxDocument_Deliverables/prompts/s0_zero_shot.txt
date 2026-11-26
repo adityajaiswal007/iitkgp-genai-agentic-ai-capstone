@@ -1,8 +1,0 @@
-Answer the question using the context. If the context does not contain the answer, say you cannot find it.
-
-CONTEXT:
-{context}
-
-QUESTION: {question}
-
-ANSWER:
