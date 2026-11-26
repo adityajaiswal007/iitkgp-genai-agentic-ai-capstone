@@ -75,12 +75,39 @@ def test_cross_references_are_not_mistaken_for_annex_headings():
 
 def test_long_blocks_are_split_within_the_limit():
     pages = ["5. " + "The bank shall comply with this requirement. " * 200]
-    chunks = chunk_document("rbi-001-x", "RBI", pages, target_chars=500, max_chars=800)
+    chunks = chunk_document("rbi-001-x", "RBI", pages, target_chars=500, max_chars=800, overlap_chars=200)
     assert len(chunks) > 5
-    assert max(len(c.text) for c in chunks) <= 900
+    assert max(len(c.text) for c in chunks) <= 800 + 200 + 2
 
 
 def test_tokenizer_handles_rupees_stems_and_keeps_numbers():
     assert tokenize("₹500 per day")[:2] == ["rs", "500"]
     assert "year" in tokenize("five years.")  # 'rs.' rule must not split 'years.'
     assert tokenize("closing") == tokenize("closes")
+
+
+def test_scanned_indian_amounts_are_repaired_but_dates_and_decimals_are_not():
+    from regassist_rag.extract import _normalise_line
+    assert _normalise_line("Before High Court 1,00.00.000") == "Before High Court 1,00,00,000"
+    assert _normalise_line("Before Supreme Court 2.00.00,000") == "Before Supreme Court 2,00,00,000"
+    assert _normalise_line("dated 11.07.2018") == "dated 11.07.2018"
+    assert _normalise_line("at 2.00 per cent") == "at 2.00 per cent"
+    assert _normalise_line("Upto ` 400000 Nil") == "Upto ₹400000 Nil"
+
+
+def test_overlap_keeps_a_table_split_at_a_chunk_boundary_together():
+    # The CBDT Circular 17/2019 case: the limits table straddled two chunks.
+    pages = ["2. The table shall read as follows. " + "Background text. " * 70 +
+             "1. Before Appellate Tribunal 50,00,000 2. Before High Court 1,00,00,000\n"
+             "3. Before Supreme Court 2,00,00,000 and the remaining text continues here."]
+    chunks = chunk_document("tax-x", "TAX", pages, target_chars=1200, max_chars=1300, overlap_chars=250)
+    assert len(chunks) == 2
+    assert all(a in chunks[1].text for a in ("50,00,000", "1,00,00,000", "2,00,00,000"))
+    assert chunks[1].text.startswith("… ")
+
+
+def test_chunks_fit_in_the_agents_passage_window():
+    import pytest
+    from regassist_rag.config import Settings
+    with pytest.raises(ValueError):
+        Settings(chunk_max_chars=1700, chunk_overlap_chars=250)

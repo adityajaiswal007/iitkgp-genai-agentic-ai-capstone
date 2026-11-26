@@ -21,14 +21,15 @@ This workspace starts from the `agent-orchestrator` branch. Everything below is 
 | `src/regulatory_agent/prompts/shared.md` | Assistant scope covers RBI, SEBI and income tax. |
 | `src/regulatory_agent/prompts/executor.md` | Evidence issued under the Income-tax Act, 1961 must be flagged in limitations, using the status reason. |
 | `src/regulatory_agent/prompts/state_summary.md` | Mentions income-tax questions. |
-| `src/regulatory_agent/grounding.py` | Uploaded files that mention CBDT, income tax, direct tax, the Black Money Act or Vivad se Vishwas count as regulatory evidence. |
+| `src/regulatory_agent/grounding.py` | Uploaded files that mention CBDT, income tax, direct tax, the Black Money Act or Vivad se Vishwas count as regulatory evidence. The number check reads lakh and crore amounts ("₹50 lakh" = 50,00,000), so answers using Indian units are not rejected as citing absent numbers. |
 | `src/regulatory_agent/agent.py` | User-facing clarify and abstain messages mention income tax. |
 | `src/regulatory_agent/models.py` | Refusal messages mention income tax. The offline demo planner routes tax questions to `TAX`, refuses GST questions as out of scope and personal tax questions as personal advice, and picks `BOTH` only for RBI plus SEBI. |
 | `src/regulatory_agent/tools.py` | The mock corpus gains a fictional `demo-tax` document so demo mode exercises the tax path. |
 | `tests/fixtures/refusal_cases.jsonl` | RF04 ("How much income tax will I pay on my FD interest?") is still refused, now as `personal_advice` rather than `out_of_scope`, since income tax is in scope. |
-| `tests/test_tax_authority.py` | New: 7 tests for the contract, routing, refusals, `BOTH` and tax uploads. |
+| `scripts/debug_query.py` | New: runs one question through the agent and prints the evidence labels, the draft claims and the revision feedback text, which the API reports only as counts. |
+| `tests/test_tax_authority.py` | New: 11 tests for the contract, routing, refusals, `BOTH`, tax uploads and lakh/crore amounts. |
 
-All 130 original agent tests still pass (137 with the new ones).
+All 130 original agent tests still pass (141 with the new ones).
 
 ## Not changed
 

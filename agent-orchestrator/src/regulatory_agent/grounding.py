@@ -106,7 +106,22 @@ def catalog_statuses(statuses, as_of):
     return checked
 
 
+_INDIAN_UNITS = re.compile(
+    r'(?<![\w.])(\d+(?:\.\d+)?)\s*(lakhs?|lacs?|crores?|cr\.?)(?![a-z])', re.I)
+_UNIT_VALUES = {'lakh': Decimal(100000), 'lac': Decimal(100000), 'crore': Decimal(10000000), 'cr': Decimal(10000000)}
+
+
+def _expand_indian_units(text):
+    """'50 lakh' -> '5000000' and '2 crore' -> '20000000', so amounts match however they are written."""
+    def value(match):
+        unit = match.group(2).lower().rstrip('.').rstrip('s')
+        amount = Decimal(match.group(1)) * _UNIT_VALUES['lac' if unit == 'la' else unit]
+        return format(amount.normalize(), 'f')
+    return _INDIAN_UNITS.sub(value, text)
+
+
 def numbers(text):
+    text = _expand_indian_units(text)
     digits = {
         Decimal(raw.replace(',', '').replace('\u202f', ''))
         for raw in _DIGITS.findall(text)

@@ -41,7 +41,7 @@ def index_text(chunk: Chunk, doc: Document) -> str:
 
 def _snapshot_id(docs: list[Document], data_dir: Path, settings: Settings) -> str:
     digest = hashlib.sha256()
-    digest.update(f"chunker={CHUNKER_VERSION};{settings.chunk_target_chars};{settings.chunk_max_chars}".encode())
+    digest.update(f"chunker={CHUNKER_VERSION};{settings.chunk_target_chars};{settings.chunk_max_chars};{settings.chunk_overlap_chars}".encode())
     for doc in sorted(docs, key=lambda d: d.document_id):
         digest.update(doc.document_id.encode())
         digest.update((doc.sha256 or hashlib.sha256((data_dir / doc.path).read_bytes()).hexdigest()).encode())
@@ -76,7 +76,8 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
         empty_pages += sum(1 for p in pages if len(p.strip()) < 30)
         unit = {"act": "section", "rules": "rule"}.get(doc.doc_type, "para")
         chunks.extend(chunk_document(doc.document_id, doc.authority, pages,
-                                     settings.chunk_target_chars, settings.chunk_max_chars, unit))
+                                     settings.chunk_target_chars, settings.chunk_max_chars, unit,
+                                     settings.chunk_overlap_chars))
         log.info("Indexed %s (%d pages)", doc.document_id, len(pages))
 
     with (out / "chunks.jsonl").open("w", encoding="utf-8") as fh:

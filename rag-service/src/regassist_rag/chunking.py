@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
-CHUNKER_VERSION = "8"
+CHUNKER_VERSION = "10"
 
 _PARA = re.compile(r"^(\d{1,3}[A-Z]?)\.\s*(?=[A-Z(\"“‘'])")          # 19. Any request / 2. Definitions.—
 _CHAPTER = re.compile(r"^(CHAPTER|Chapter)\s*[-–—:]?\s*([IVXLC]+|\d+)\b[\s:.\-–—]*(.{0,90})")
@@ -43,15 +43,19 @@ class Chunk:
 
 
 def _split_long(text: str, max_chars: int) -> list[str]:
+    """Split at sentence ends, then at spaces, so no piece exceeds max_chars."""
     if len(text) <= max_chars:
         return [text]
     pieces, current = [], ""
     for sentence in _SENTENCE.split(text):
-        while len(sentence) > max_chars:  # pathological run-on text (tables)
+        while len(sentence) > max_chars:  # run-on text such as tables
+            if current:
+                pieces.append(current)
+                current = ""
             cut = sentence.rfind(" ", 0, max_chars)
             cut = cut if cut > max_chars // 2 else max_chars
-            pieces.append((current + " " + sentence[:cut]).strip() if current else sentence[:cut])
-            current, sentence = "", sentence[cut:].strip()
+            pieces.append(sentence[:cut].strip())
+            sentence = sentence[cut:].strip()
         if current and len(current) + len(sentence) + 1 > max_chars:
             pieces.append(current)
             current = sentence
@@ -59,8 +63,16 @@ def _split_long(text: str, max_chars: int) -> list[str]:
             current = f"{current} {sentence}".strip()
     if current:
         pieces.append(current)
-    return pieces
+    return [p for p in pieces if p]
 
+
+def _overlap_tail(text: str, size: int) -> str:
+    """The last `size` characters of text, starting at a word boundary."""
+    if size <= 0 or len(text) <= size:
+        return text if size > 0 else ""
+    tail = text[-size:]
+    space = tail.find(" ")
+    return tail[space + 1:] if 0 <= space < size // 2 else tail
 
 def _number(value: str) -> int:
     return int(re.match(r"\d+", value).group())
@@ -90,8 +102,13 @@ def _label(unit: str, numbers: list[str], continued: bool) -> str:
 
 
 def chunk_document(document_id: str, authority: str, pages: list[str],
-                   target_chars: int = 1400, max_chars: int = 2200, unit: str = "para") -> list[Chunk]:
-    """unit names the numbered division in labels: 'para', 'section' or 'rule'."""
+                   target_chars: int = 1200, max_chars: int = 1500, unit: str = "para",
+                   overlap_chars: int = 250) -> list[Chunk]:
+    """unit names the numbered division in labels: 'para', 'section' or 'rule'.
+
+    Each chunk after the first on a page starts with the last ~overlap_chars of the
+    previous chunk, so a table row or sentence cut at a boundary appears whole in at
+    least one chunk. Chunks never exceed max_chars + overlap_chars."""
     chunks: list[Chunk] = []
     heading, current_number, in_annex = "", None, False
 
@@ -133,9 +150,12 @@ def chunk_document(document_id: str, authority: str, pages: list[str],
 
         for numbers, continued, text, block_heading, word in packed:
             for piece_index, piece in enumerate(_split_long(text, max_chars)):
-                if len(piece) < 40 and chunks and chunks[-1].page == page_index:
+                if (len(piece) < 40 and chunks and chunks[-1].page == page_index
+                        and len(chunks[-1].text) + len(piece) + 1 <= max_chars + overlap_chars):
                     chunks[-1].text += "\n" + piece
                     continue
+                if overlap_chars and chunks and chunks[-1].page == page_index:
+                    piece = "… " + _overlap_tail(chunks[-1].text, overlap_chars) + "\n" + piece
                 ordinal = len(chunks)
                 label = _label(word, numbers if piece_index == 0 else numbers[:1], continued or piece_index > 0)
                 chunks.append(Chunk(

@@ -22,10 +22,11 @@ class Settings:
     auto_build: bool = True
     ocr: bool = True
 
-    # Chunking and passage limits. The agent contract allows at most 10 passages
-    # per fetch and 6000 characters per passage.
-    chunk_target_chars: int = 1400
-    chunk_max_chars: int = 2200
+    # Chunking and passage limits. The agent shows the model (and number-checks) only
+    # the first 1800 characters of each passage, so max + overlap must stay below that.
+    chunk_target_chars: int = 1200
+    chunk_max_chars: int = 1500
+    chunk_overlap_chars: int = 250
     fetch_max_passages: int = 8
 
     # Dense retrieval (optional): any OpenAI-compatible /embeddings endpoint.
@@ -46,6 +47,11 @@ class Settings:
 
     request_timeout: float = 20.0
 
+    def __post_init__(self):
+        if self.chunk_max_chars + self.chunk_overlap_chars + 2 > 1800:
+            raise ValueError("RAG_CHUNK_MAX_CHARS + RAG_CHUNK_OVERLAP_CHARS must stay below 1800, "
+                             "the passage length the agent shows the model.")
+
     @property
     def dense_enabled(self) -> bool:
         return bool(self.embedding_base_url and self.embedding_model)
@@ -63,8 +69,9 @@ class Settings:
             include_out_of_scope=_bool("RAG_INCLUDE_OUT_OF_SCOPE", False),
             auto_build=_bool("RAG_AUTO_BUILD", True),
             ocr=_bool("RAG_OCR", True),
-            chunk_target_chars=int(os.getenv("RAG_CHUNK_TARGET_CHARS", "1400")),
-            chunk_max_chars=int(os.getenv("RAG_CHUNK_MAX_CHARS", "2200")),
+            chunk_target_chars=int(os.getenv("RAG_CHUNK_TARGET_CHARS", "1200")),
+            chunk_max_chars=int(os.getenv("RAG_CHUNK_MAX_CHARS", "1500")),
+            chunk_overlap_chars=int(os.getenv("RAG_CHUNK_OVERLAP_CHARS", "250")),
             fetch_max_passages=int(os.getenv("RAG_FETCH_MAX_PASSAGES", "8")),
             embedding_base_url=os.getenv("EMBEDDING_BASE_URL", "").rstrip("/"),
             embedding_api_key=os.getenv("EMBEDDING_API_KEY", ""),

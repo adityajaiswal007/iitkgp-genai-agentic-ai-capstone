@@ -36,12 +36,16 @@ def _is_arrangement_page(lines: list[str]) -> bool:
 
 
 _RUPEE_FONT = re.compile(r"`\s?(?=\d)")  # Rupee Foradian fonts extract the ₹ sign as a backtick
+# Indian-grouped amounts whose separators were scanned as dots: "1,00.00.000" -> "1,00,00,000".
+# Requires at least two 2-digit groups and a final 3-digit group, so dates and decimals are untouched.
+_INDIAN_AMOUNT = re.compile(r"(?<![\d.,])\d{1,2}(?:[.,]\d{2}){2,}[.,]\d{3}(?![\d.,]?\d)")
 
 
 def _normalise_line(line: str) -> str:
     line = unicodedata.normalize("NFKC", line)
     line = _CONTROL.sub(" ", line)
     line = _RUPEE_FONT.sub("₹", line)
+    line = _INDIAN_AMOUNT.sub(lambda m: re.sub(r"[.,]", ",", m.group()), line)
     line = line.replace("\u00ad", "").replace("\ufffe", "-")
     return re.sub(r"[ \t]+", " ", line).strip()
 

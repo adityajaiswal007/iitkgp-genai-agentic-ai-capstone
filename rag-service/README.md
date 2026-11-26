@@ -37,11 +37,18 @@ sets, are listed in the `aliases` column of `tax_catalog.csv`.
    table-of-contents rows and the Acts' "arrangement of sections" pages are removed. Pages without a text layer go through Tesseract OCR
    when it is installed (the Docker image includes it).
 2. **Chunking.** Chunks start at RBI paragraph numbers ("19."), Act section numbers
-   ("2. Definitions.—") or rule numbers, target about 1,400 characters, and never cross a
-   page, so every citation has a single page. Numbers must increase, so numbered list items
-   and table rows inside a paragraph do not start a new one. Annexes, schedules, appendices
-   and forms restart the numbering and are labelled as items. Each chunk carries the nearest
-   heading and a label such as `paras 15–17`, `section 2 (contd.)`, `rule 162` or `item 4`.
+   ("2. Definitions.—") or rule numbers, target about 1,200 characters (1,500 maximum), and
+   never cross a page, so every citation has a single page. Each chunk after the first on a
+   page begins with the last ~250 characters of the previous one, so a sentence or table row
+   cut at a boundary appears whole in at least one chunk. Chunks stay under 1,800 characters
+   because the agent shows the model, and number-checks, only the first 1,800 characters of
+   each passage; the service refuses settings that would exceed this. Numbers must increase,
+   so numbered list items and table rows inside a paragraph do not start a new one.
+   Annexes, schedules, appendices and forms restart the numbering and are labelled as items.
+   Each chunk carries the nearest heading and a label such as `paras 15–17`,
+   `section 2 (contd.)`, `rule 162` or `item 4`. Indian amounts whose separators were scanned
+   as dots ("1,00.00.000") are repaired, and the ₹ sign is restored where a PDF font extracts
+   it as a backtick.
 3. **Ranking.** BM25 (with English stemming) over title + heading + chunk text. If an
    embedding server is configured, dense cosine similarity is fused with BM25 by reciprocal
    rank fusion. If a reranker is configured, it reorders the top 30 chunks; if it fails, the
@@ -108,7 +115,7 @@ EMBEDDING_CA_CERT=./certificate/embedding.crt
 
 The `certificate` branch's `embedding.crt` is a Caddy local root CA, which suggests the
 team's embedding server sits behind Caddy; copy it to `rag-service/certificate/` and use the
-path above. The whole corpus (about 9,800 chunks) is embedded once and cached in the index
+path above. The whole corpus (about 12,200 chunks) is embedded once and cached in the index
 folder; it is re-embedded only when the model or documents change. Models that expect
 instruction prefixes (for example e5's `query: ` and `passage: `) can use
 `EMBEDDING_QUERY_PREFIX` and `EMBEDDING_DOCUMENT_PREFIX`.
@@ -129,12 +136,16 @@ and writes `eval_results/<label>/summary.md` and `per_question.csv`. Metrics: wh
 document is ranked 1st, in the top 3 or top 5; mean reciprocal rank; whether a fetched
 passage is on a gold page; and whether the fetched passages contain the gold evidence text.
 
-BM25 baseline (`eval_results/bm25-baseline`):
+BM25 with overlapping chunks (`eval_results/bm25-overlap`, the current configuration):
 
 | Set | Questions | Gold doc 1st | In top 3 | Gold page fetched (±1) | Evidence fetched |
 | --- | --- | --- | --- | --- | --- |
-| RBI | 28 | 86% | 96% | 82% | 100% |
-| TAX | 74 | 86% | 99% | 91% | 95% |
+| RBI | 28 | 86% | 96% | 82% | 96% |
+| TAX | 74 | 89% | 99% | 92% | 95% |
+
+`eval_results/bm25-baseline` is the earlier run with longer chunks and no overlap. Its
+evidence figures are slightly optimistic: some chunks were longer than the 1,800 characters
+the agent actually reads.
 
 The right document is almost always found. The weaker figure is the gold page for questions
 on the Income-tax Act, 2025 (79% within one page): with 686 pages and long sections such as

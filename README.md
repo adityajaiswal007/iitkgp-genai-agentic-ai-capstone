@@ -188,6 +188,16 @@ conflicts.
 The evaluation runs every answerable gold question (28 RBI, 74 income tax) against the
 retrieval service and writes `rag-service/eval_results/my-run/summary.md`.
 
+If the agent answers "I could not verify an answer", see why with (Windows paths shown):
+
+```powershell
+cd agent-orchestrator
+.venv\Scripts\python scripts\debug_query.py "your question"
+```
+
+It prints the evidence the agent used, its draft claims, and the exact feedback from the
+automatic checks and the critic.
+
 ## Limitations
 
 Concurrent retries can run inference more than once; PostgreSQL deduplicates saved turns, not

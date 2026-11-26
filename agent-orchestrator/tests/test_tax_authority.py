@@ -61,3 +61,18 @@ def test_tax_uploads_count_as_regulatory_evidence():
     upload = {'document_id': 'upload-1', 'authority': 'UPLOAD', 'title': 'circular.pdf',
               'text': 'CBDT circular on monetary limits for appeals'}
     assert regulatory_uploads([upload]) == [upload]
+
+
+@pytest.mark.parametrize('claim,passage', [
+    ('The limit before the ITAT is ₹50 lakh.', 'Before Appellate Tribunal 50,00,000'),
+    ('Appeals to the Supreme Court need a tax effect above Rs. 2 crore.', 'Before Supreme Court 2,00,00,000'),
+    ('The penalty is ₹1.5 lakh.', 'a penalty of Rs. 1,50,000'),
+])
+def test_lakh_and_crore_amounts_match_their_digit_form(claim, passage):
+    from regulatory_agent.grounding import numbers
+    assert numbers(claim) - numbers(passage) == set()
+
+
+def test_unrelated_amounts_still_fail_the_number_check():
+    from regulatory_agent.grounding import numbers
+    assert numbers('The limit is ₹60 lakh.') - numbers('Before Appellate Tribunal 50,00,000')
