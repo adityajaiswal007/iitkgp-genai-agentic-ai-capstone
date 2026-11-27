@@ -5,6 +5,7 @@ This workspace starts from the `agent-orchestrator` branch. Everything below is 
 ## New
 
 - `data/`: RBI and tax corpora and gold sets from `main`, unzipped and organised, plus the Income-tax Act, 2025 and Income-tax Rules, 2026 supplied separately. The tax gold set drops the 6 Rules-1962 questions and has page numbers updated for the new editions (see `data/README.md`).
+- `data/RBI/gold/CORRECTIONS.md`: two RBI gold questions labelled unanswerable are answered by the corpus; corrected to lookups.
 - `rag-service/`: the hybrid retrieval service that replaces the mock (see `rag-service/README.md`).
 - `observability/langfuse/`: the official Langfuse Docker setup with a port override and a `.env` generator, for the trace dashboard (see its README).
 
@@ -41,10 +42,11 @@ This workspace starts from the `agent-orchestrator` branch. Everything below is 
 | `src/regulatory_agent/agent.py` (context check) | In a conversation with history, terms the contextualizer returns that appear in the current question are no longer treated as references needing verification; only the other referents must appear in an earlier answer (compared ignoring case, hyphens and spacing). With Qwen3-8B, self-contained questions asked mid-conversation were otherwise stopped with `INVALID_CONTEXT`. Two tests in `tests/test_conversation_context.py`. |
 | `src/regulatory_agent/attachments.py` (Windows fix) | The attachment-extraction subprocess now runs with UTF-8 input and output and, on Windows, with `SYSTEMROOT` and the temp folder in its environment. Before, on Windows it could fail to start, and could not return text containing ₹ or Devanagari. |
 | `tests/test_prompt_workflow.py`, `tests/test_agent.py`, `tests/test_qwen_tls.py` (Windows fix) | Read and write test files as UTF-8, so the tests pass on Windows. |
+| `scripts/eval_e2e.py` | New: end-to-end evaluation. Runs every gold question through the agent in a fresh conversation, grades decision, correctness (LLM judge plus deterministic checks), citations and forbidden content, assigns a failure-taxonomy category, writes `summary.md`, `failures.md` and `graded.csv`, and attaches scores to Langfuse traces. Resumable. 14 tests in `tests/test_eval_e2e.py`. |
 | `scripts/debug_query.py` | New: runs one question through the agent and prints the evidence labels, the draft claims and the revision feedback text, which the API reports only as counts. |
 | `tests/test_tax_authority.py` | New: 11 tests for the contract, routing, refusals, `BOTH`, tax uploads and lakh/crore amounts. |
 
-All 130 original agent tests still pass (150 with the new ones).
+All 130 original agent tests still pass (168 with the new ones).
 
 ## Not changed
 

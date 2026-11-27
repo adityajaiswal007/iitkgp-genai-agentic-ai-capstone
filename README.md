@@ -205,8 +205,29 @@ publish showcase traces on Langfuse Cloud for the submission with
 (cd rag-service && .venv/bin/python scripts/eval_retrieval.py --label my-run)
 ```
 
-The evaluation runs every answerable gold question (28 RBI, 74 income tax) against the
-retrieval service and writes `rag-service/eval_results/my-run/summary.md`.
+The retrieval evaluation runs every answerable gold question (30 RBI, 74 income tax) against
+the retrieval service and writes `rag-service/eval_results/my-run/summary.md`.
+
+### End-to-end evaluation
+
+With the retrieval service and the agent running in `qwen` mode:
+
+```powershell
+cd agent-orchestrator
+.venv\Scripts\python scripts\eval_e2e.py --label e2e-run1 --limit 5   # quick check
+.venv\Scripts\python scripts\eval_e2e.py --label e2e-run1             # all 124 questions
+```
+
+Each gold question runs in a fresh conversation through the full agent. Answers are graded on
+the decision (answer, refuse, clarify or abstain, as the gold set expects), correctness (an LLM
+judge using the same Qwen endpoint, with deterministic key-fact and number checks as fallback),
+citations (gold document and page) and forbidden content, and each failure is given a
+failure-taxonomy category. Results go to `agent-orchestrator/eval_results/<label>/`:
+`summary.md`, `failures.md`, `graded.csv` (with a `manual_category` column for review) and
+`results.jsonl`. The run is resumable: rerun the same command after an interruption. With
+Langfuse configured, scores are attached to each question's trace. Calls go straight to the
+agent, so the backend's daily token allowance doesn't apply; expect 40–60 minutes and about
+1.5 million Qwen tokens for a full run.
 
 If the agent answers "I could not verify an answer", see why with (Windows paths shown):
 
