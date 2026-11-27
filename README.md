@@ -4,9 +4,9 @@ Capstone project for the **Executive Post Graduate Programme in Generative AI an
 
 ## Project overview
 
-RegAssist answers read-only questions about RBI and SEBI regulations using cited passages.
+RegAssist answers read-only questions about RBI and Tax regulations using cited passages.
 The real retrieval service supplies RBI Master Directions for commercial banks and NBFCs.
-The current corpus has no SEBI documents, so the agent reports that gap when asked for SEBI evidence.
+
 
 ## Applications and query flow
 
@@ -28,7 +28,7 @@ query carries the complete committed PostgreSQL transcript, which the agent uses
 context when its checkpoint or summary is missing. Context exceeding the model budget produces
 an explicit error rather than a silent history cut. If the agent runs in offline `demo` mode,
 its answers say so. Attachments remain downloadable and are forwarded for text extraction;
-RBI and SEBI file excerpts can support cited answers within their conversation.
+RBI and Tax file excerpts can support cited answers within their conversation.
 
 Changes from the original `agent-orchestrator` branch are listed in
 [`CHANGES_FROM_BASE.md`](CHANGES_FROM_BASE.md).
@@ -143,7 +143,7 @@ From the repository root, use a separate terminal for each command, in this orde
 Open http://localhost:3000. Health endpoints are `http://127.0.0.1:3001/api/health`,
 `http://127.0.0.1:8000/health` and `http://127.0.0.1:8002/health`. Retrieval health reports the
 index snapshot and document counts. Ask an RBI credit-card closure question to verify that the
-agent cites a real source. A SEBI-only question should report that no matching documents were found.
+agent cites a real source. 
 
 ## Run with Docker
 
@@ -199,7 +199,7 @@ automatic checks and the critic.
 
 Concurrent retries can run inference more than once; PostgreSQL deduplicates saved turns, not
 model calls. Deleting UI chats does not delete agent SQLite checkpoints. This is a shared local
-workspace without user authentication. The UI is still titled "RBI/SEBI Copilot".
+workspace without user authentication. The UI is still titled "RBI/Tax Copilot".
 
 ## Academic context
 
