@@ -21,6 +21,7 @@ and the hosted Qwen model.
 | `agent-orchestrator` | LangGraph planner, executor and critic; calls retrieval and Qwen; keeps its reasoning state in SQLite under the same conversation ID |
 | `rag-service` | Hybrid retrieval over the documents in `data/`; see [`rag-service/README.md`](rag-service/README.md) |
 | `data` | RBI and income-tax documents and gold question sets; see [`data/README.md`](data/README.md) |
+| `observability/langfuse` | Optional Langfuse trace dashboard on port 3100; see [`observability/langfuse/README.md`](observability/langfuse/README.md) |
 
 The backend calls `POST /v1/executions` and saves its `answer_text`, including citations. There
 is no sample-answer fallback when the agent is unavailable: HTTP 502/503 reaches the UI. Each
@@ -78,6 +79,7 @@ The other values (ports, Redis, rate limits, `AGENT_BASE_URL=http://127.0.0.1:80
 | `AGENT_MODE` | Leave as `qwen`. Set `demo` only to test the plumbing offline; demo answers just repeat retrieved passages. |
 | `RAG_BASE_URL` | Leave as `http://127.0.0.1:8002`, the retrieval service. |
 | `AGENT_API_KEY`, `RAG_API_KEY` | Leave empty, or set each to match the backend (`AGENT_API_KEY`) and `rag-service/.env` (`RAG_API_KEY`). |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Leave the keys empty unless you run the Langfuse dashboard. `observability/langfuse/make_env.py` prints the values to paste here. |
 
 Example of the lines you edit:
 
@@ -174,6 +176,24 @@ mounts `QWEN_CA_CERT` read-only in the agent. The backend container reaches the 
 `host.docker.internal:8000`. For a different address, set `AGENT_DOCKER_BASE_URL` in
 `backend-app/.env`.
 
+## Trace dashboard (optional)
+
+Langfuse shows every question as a trace: each planner, retrieval, Qwen and critic step
+with its inputs, outputs, tokens and timing, and the exact reason when the agent
+abstains. It runs in Docker on port 3100:
+
+```powershell
+cd observability\langfuse
+python make_env.py        # once: creates .env and prints the agent's three LANGFUSE_ lines
+docker compose up -d
+```
+
+Add the printed lines to `agent-orchestrator/.env`, restart the agent, and open
+http://localhost:3100. Details are in
+[`observability/langfuse/README.md`](observability/langfuse/README.md), including how to
+publish showcase traces on Langfuse Cloud for the submission with
+`agent-orchestrator/scripts/trace_showcase.py`.
+
 ## Tests and evaluation
 
 ```bash
@@ -182,8 +202,29 @@ mounts `QWEN_CA_CERT` read-only in the agent. The backend container reaches the 
 (cd rag-service && .venv/bin/python scripts/eval_retrieval.py --label my-run)
 ```
 
-The evaluation runs every answerable gold question (28 RBI, 74 income tax) against the
-retrieval service and writes `rag-service/eval_results/my-run/summary.md`.
+The retrieval evaluation runs every answerable gold question (30 RBI, 74 income tax) against
+the retrieval service and writes `rag-service/eval_results/my-run/summary.md`.
+
+### End-to-end evaluation
+
+With the retrieval service and the agent running in `qwen` mode:
+
+```powershell
+cd agent-orchestrator
+.venv\Scripts\python scripts\eval_e2e.py --label e2e-run1 --limit 5   # quick check
+.venv\Scripts\python scripts\eval_e2e.py --label e2e-run1             # all 124 questions
+```
+
+Each gold question runs in a fresh conversation through the full agent. Answers are graded on
+the decision (answer, refuse, clarify or abstain, as the gold set expects), correctness (an LLM
+judge using the same Qwen endpoint, with deterministic key-fact and number checks as fallback),
+citations (gold document and page) and forbidden content, and each failure is given a
+failure-taxonomy category. Results go to `agent-orchestrator/eval_results/<label>/`:
+`summary.md`, `failures.md`, `graded.csv` (with a `manual_category` column for review) and
+`results.jsonl`. The run is resumable: rerun the same command after an interruption. With
+Langfuse configured, scores are attached to each question's trace. Calls go straight to the
+agent, so the backend's daily token allowance doesn't apply; expect 40–60 minutes and about
+1.5 million Qwen tokens for a full run.
 
 If the agent answers "I could not verify an answer", see why with (Windows paths shown):
 

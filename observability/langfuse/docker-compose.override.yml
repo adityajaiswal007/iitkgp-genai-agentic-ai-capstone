@@ -1,0 +1,17 @@
+# RegAssist overrides for the official Langfuse compose file. Docker Compose loads this
+# file automatically next to docker-compose.yml. Requires Docker Compose 2.24.4 or newer
+# (for !override, which replaces a port list instead of adding to it).
+#
+# - Langfuse's web UI moves from port 3000 (used by the RegAssist frontend) to 3100.
+# - Ports that the official file opens to the whole network are bound to this machine only.
+services:
+  langfuse-web:
+    ports: !override
+      - "127.0.0.1:3100:3000"
+  minio:
+    ports: !override
+      - "127.0.0.1:9090:9000"
+      - "127.0.0.1:9091:9001"
+  langfuse-ai-gateway:
+    ports: !override
+      - "127.0.0.1:${LANGFUSE_AI_GATEWAY_PORT:-3031}:${LANGFUSE_AI_GATEWAY_PORT:-3031}"

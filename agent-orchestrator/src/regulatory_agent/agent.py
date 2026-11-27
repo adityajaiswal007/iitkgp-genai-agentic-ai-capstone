@@ -16,6 +16,7 @@ from .attachments import AttachmentTools
 from .models import REFUSAL_MESSAGES, ROLE_OUTPUT_TOKENS, build_messages, history_messages
 from .grounding import (catalog_statuses, contains_private_value, label_evidence, numbers,
                         redact, regulatory_uploads)
+from . import tracing
 
 ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI and SEBI evidence.'
 TOOL_CHAIN = list(TOOL_SCHEMAS)
@@ -28,6 +29,12 @@ REGULATOR_REPLY = re.compile(
 SOURCE_ID = re.compile(r'(?:[\w-]+:p\d+(?::c\d+)?|(?:rbi|sebi|tax)-\d+-[\w-]+)', re.I)
 
 
+
+def _comparable(text):
+    """Lower-case words and numbers only, so 'External-Benchmark-Linked Loan' matches
+    'external benchmark linked loan' when checking a referent against the conversation."""
+    return ' '+' '.join(re.findall(r'[a-z0-9]+', text.casefold()))+' '
+
 class RegulatoryAgent:
     """Single-process notebook service. One active request per conversation at a time."""
     def __init__(self, model, tools, db_path='agent_state.sqlite', limits=None):
@@ -39,7 +46,8 @@ class RegulatoryAgent:
         self.saver = SqliteSaver(self.connection)
         graph = StateGraph(AgentState)
         for name in ('resolve_context','planner','executor','critic','finish'):
-            graph.add_node(name, getattr(self, name))
+            graph.add_node(name, tracing.traced_node(name, getattr(self, name),
+                                                     'evaluator' if name == 'critic' else 'chain'))
         graph.add_edge(START, 'resolve_context')
         graph.add_conditional_edges('resolve_context', lambda s:s['route'],
                                     {'planner':'planner','finish':'finish'})
@@ -90,10 +98,21 @@ class RegulatoryAgent:
             usage = None
             raw = ''
             try:
-                raw, usage = call_with_timeout(
-                    lambda:self.model.complete(call_role, request_payload, schema,
-                                               output_cap, self.remaining_seconds(s)),
-                    self.remaining_seconds(s))
+                with tracing.observation(
+                        f'qwen.{call_role}', as_type='generation',
+                        model=getattr(self.model, 'model', type(self.model).__name__),
+                        model_parameters={'max_tokens': output_cap, 'temperature': 0},
+                        input=request_payload, metadata={'attempt': attempt, 'reserved_tokens': reservation}) as generation:
+                    try:
+                        raw, usage = call_with_timeout(
+                            lambda:self.model.complete(call_role, request_payload, schema,
+                                                       output_cap, self.remaining_seconds(s)),
+                            self.remaining_seconds(s))
+                    except Exception as exc:
+                        generation.update(level='ERROR', status_message=type(exc).__name__)
+                        raise
+                    generation.update(output=tracing.clip(raw),
+                                      usage_details={'total': usage} if isinstance(usage, int) else None)
                 if usage is not None:
                     if type(usage) is not int or usage < 0:
                         raise PermanentModelError('Invalid provider usage metadata.')
@@ -155,7 +174,13 @@ class RegulatoryAgent:
             self.take_step(s)
             start = time.monotonic()
             tools = AttachmentTools(self.tools, s['attachment_passages'], s['current_attachment_ids']) if s['attachment_passages'] else self.tools
-            result = tool_attempt(tools, name, arguments, self.remaining_seconds(s))
+            with tracing.observation(f'tool.{name}',
+                                     as_type='retriever' if name in ('search_documents', 'fetch_passages') else 'tool',
+                                     input=arguments, metadata={'attempt': attempt+1}) as span:
+                result = tool_attempt(tools, name, arguments, self.remaining_seconds(s))
+                span.update(output=tracing.summarise_tool_result(name, result.data) if result.ok else None,
+                            level='DEFAULT' if result.ok else 'ERROR',
+                            status_message=None if result.ok else result.error.code)
             self.event(s,'tool',name,ok=result.ok,attempt=attempt+1,
                        latency_ms=round((time.monotonic()-start)*1000),
                        code=None if result.ok else result.error.code)
@@ -167,6 +192,7 @@ class RegulatoryAgent:
 
     def stop(self, s, exc):
         self.event(s,'control','stop',code=exc.code)
+        tracing.event('control.stop', level='WARNING', output={'code': exc.code, 'message': exc.message})
         s.update(status='abstained', route='finish',
                  answer={'claims':[], 'limitations':[exc.message], 'message':ABSTAIN_MESSAGE})
         return s
@@ -199,9 +225,13 @@ class RegulatoryAgent:
             resolved = self.model_json(s, 'contextualizer', {
                 'question':s['question'], 'messages':messages, 'summary':s['summary'],
             }, ContextResolution)
-            referents = list(dict.fromkeys(name for name in resolved.referents if not SOURCE_ID.fullmatch(name.strip())))
-            prior_answers = '\n'.join(m['content'] for m in s['messages'] if m['role']=='assistant').casefold()
-            if any(contains_private_value(name) or name.casefold() not in prior_answers for name in referents):
+            # Terms the user wrote in this question are not references to the conversation,
+            # even if the model lists them; only the remaining referents must be verified.
+            question_text = _comparable(s['question'])
+            referents = [name for name in dict.fromkeys(resolved.referents)
+                         if _comparable(name) and _comparable(name) not in question_text]
+            prior_answers = _comparable('\n'.join(m['content'] for m in s['messages'] if m['role']=='assistant'))
+            if any(contains_private_value(name) or _comparable(name) not in prior_answers for name in referents):
                 raise ControlledStop('INVALID_CONTEXT', 'Could not verify the referenced entities in this conversation.')
             # Preserve the user's request verbatim; bind identities without letting a rewrite
             # change the requested attribute or narrow a plural reference to a single region.
@@ -445,6 +475,12 @@ class RegulatoryAgent:
                 value=='pass' for value in verdict.checks.model_dump().values())
             self.event(s, 'review', 'verdict', decision=verdict.decision,
                        deterministic_issue_count=len(issues), checks_pass=checks_pass)
+            tracing.event('critic.verdict', level='DEFAULT' if verdict.decision == 'accept' and not issues else 'WARNING',
+                          output={'decision': verdict.decision,
+                                  'checks': verdict.checks.model_dump() if verdict.checks else None,
+                                  'automatic_check_issues': issues, 'critic_issues': verdict.issues,
+                                  'revise_target': verdict.revise_target},
+                          metadata={'revision': s['revision']})
             if verdict.decision=='accept' and not issues and checks_pass:
                 _, citations = label_evidence(s['evidence'], s['document_status'])
                 claims = [

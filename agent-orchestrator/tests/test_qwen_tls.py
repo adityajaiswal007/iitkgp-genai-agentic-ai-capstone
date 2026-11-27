@@ -105,7 +105,7 @@ def test_constructor_accepts_connection_values(https_endpoint):
 
 def test_invalid_ca_file_fails_at_startup(tmp_path,monkeypatch):
     path=tmp_path/'bad.crt'
-    path.write_text('not a certificate')
+    path.write_text('not a certificate', encoding='utf-8')
     monkeypatch.setenv('QWEN_CA_CERT',str(path))
     with pytest.raises(ValueError,match='QWEN_CA_CERT'):
         QwenModel()

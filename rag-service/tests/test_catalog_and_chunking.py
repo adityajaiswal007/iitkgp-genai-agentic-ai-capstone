@@ -111,3 +111,30 @@ def test_chunks_fit_in_the_agents_passage_window():
     from regassist_rag.config import Settings
     with pytest.raises(ValueError):
         Settings(chunk_max_chars=1700, chunk_overlap_chars=250)
+
+
+def test_rbi_sub_sections_label_chunks_and_are_never_mixed():
+    # The Interest Rates on Advances case: para 36 (MCLR) was read as applying to
+    # repo-linked loans because its "B.1 ... MCLR" heading sat in another chunk.
+    pages = ["B. Reset of interest rates\n"
+             "B.1 Reset of interest rates under Marginal Cost of Funds based Lending Rate (MCLR) system\n"
+             "36. The periodicity of reset shall be one year or lower.\n"
+             "B.2 Reset of interest rates under External Benchmarks\n"
+             "38. The interest rate under external benchmark shall be reset at least once in three months."]
+    chunks = chunk_document("rbi-018-x", "RBI", pages, target_chars=1200, max_chars=1500, subheadings=True)
+    by_para = {c.section: c for c in chunks}
+    assert by_para["para 36"].subheading.startswith("B.1") and "MCLR" in by_para["para 36"].subheading
+    assert by_para["para 38"].subheading.startswith("B.2")
+    assert "three months" not in by_para["para 36"].text
+    assert "B. Reset of interest rates" in by_para["para 36"].text  # parent heading kept with its child
+
+
+def test_sub_section_detection_ignores_sentences_and_table_headers():
+    pages = ["5. A Bank shall maintain records.\nS. No Particulars of the account\n6. Records shall be kept for five years."]
+    chunks = chunk_document("rbi-x", "RBI", pages, target_chars=40, max_chars=400, subheadings=True)
+    assert all(c.subheading == "" for c in chunks)
+
+
+def test_sub_sections_are_off_for_tax_documents_by_default():
+    pages = ["A. Details of entity\n12. The form shall be signed."]
+    assert all(c.subheading == "" for c in chunk_document("tax-x", "TAX", pages, unit="rule"))

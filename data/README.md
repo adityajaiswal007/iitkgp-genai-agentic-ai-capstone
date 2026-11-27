@@ -27,6 +27,10 @@ data/
 
 All 72 RBI files match the SHA-256 hashes in `manifest_frozen.csv`.
 
+Two RBI gold questions labelled "unanswerable" (Q29, minimum CRAR; Q30, minimum LCR) are
+answered directly by the Capital Adequacy and Asset Liability Management Directions in the
+corpus. They were corrected to `lookup` questions; see `RBI/gold/CORRECTIONS.md`.
+
 ## Corrections to the frozen RBI manifest
 
 `catalog_overrides.csv` records dates stated in the Directions themselves:

@@ -37,7 +37,7 @@ PASSAGE_TEXT_LIMIT = 6000  # agent contract
 
 
 def index_text(chunk: Chunk, doc: Document) -> str:
-    return f"{doc.title}\n{chunk.heading}\n{chunk.section}\n{chunk.text}"
+    return f"{doc.title}\n{chunk.heading}\n{chunk.subheading}\n{chunk.section}\n{chunk.text}"
 
 
 def _snapshot_id(docs: list[Document], data_dir: Path, settings: Settings) -> str:
@@ -62,7 +62,7 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
     out.mkdir(parents=True, exist_ok=True)
     info_path = out / "build_info.json"
     if not force and info_path.exists():
-        info = json.loads(info_path.read_text())
+        info = json.loads(info_path.read_text(encoding="utf-8"))
         if info.get("snapshot") == snapshot:
             log.info("Index %s is current", snapshot)
             if settings.dense_enabled:
@@ -78,7 +78,8 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
         unit = {"act": "section", "rules": "rule"}.get(doc.doc_type, "para")
         chunks.extend(chunk_document(doc.document_id, doc.authority, pages,
                                      settings.chunk_target_chars, settings.chunk_max_chars, unit,
-                                     settings.chunk_overlap_chars))
+                                     settings.chunk_overlap_chars,
+                                     subheadings=doc.authority == "RBI"))  # RBI uses A./B.1 sub-sections
         log.info("Indexed %s (%d pages)", doc.document_id, len(pages))
 
     with (out / "chunks.jsonl").open("w", encoding="utf-8") as fh:
@@ -95,7 +96,7 @@ def build_index(settings: Settings, only_filenames: set[str] | None = None, forc
         "include_out_of_scope": settings.include_out_of_scope,
         "document_ids": sorted(d.document_id for d in docs),
     }
-    info_path.write_text(json.dumps(info, indent=2))
+    info_path.write_text(json.dumps(info, indent=2), encoding="utf-8")
     for stale in out.glob("embeddings*"):
         stale.unlink()
     if settings.dense_enabled:
@@ -125,7 +126,7 @@ def _load_chunks(index_dir: Path) -> list[Chunk]:
 def embedding_text(chunk: Chunk, doc: Document) -> str:
     """What the embedding model sees: a short context line, then the chunk.
     Kept short because small embedding models read at most 512 tokens."""
-    context = " | ".join(part for part in (doc.title[:160], chunk.section) if part)
+    context = " | ".join(part for part in (doc.title[:160], chunk.subheading, chunk.section) if part)
     return f"{context}\n{chunk.text}"
 
 
@@ -148,7 +149,7 @@ def _ensure_embeddings(settings: Settings) -> Path:
     chunks = _load_chunks(settings.index_dir)
     texts = [settings.embedding_document_prefix + embedding_text(c, catalog.get(c.document_id)) for c in chunks]
 
-    dimension = json.loads(meta.read_text())["dimension"] if meta.exists() and partial.exists() else None
+    dimension = json.loads(meta.read_text(encoding="utf-8"))["dimension"] if meta.exists() and partial.exists() else None
     done = partial.stat().st_size // (4 * dimension) if dimension else 0
     if dimension and partial.stat().st_size != done * 4 * dimension:  # torn last write
         with partial.open("r+b") as fh:
@@ -170,7 +171,7 @@ def _ensure_embeddings(settings: Settings) -> Path:
                 vectors = client.embed(texts[start:start + settings.embedding_batch_size]).astype(np.float32)
                 if dimension is None:
                     dimension = vectors.shape[1]
-                    meta.write_text(json.dumps({"dimension": dimension, "model": settings.embedding_model}))
+                    meta.write_text(json.dumps({"dimension": dimension, "model": settings.embedding_model}), encoding="utf-8")
                 out.write(vectors.tobytes())
                 out.flush()
                 done = start + len(vectors)
@@ -202,7 +203,7 @@ class Retriever:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.catalog = Catalog.load(settings.data_dir)
-        info = json.loads((settings.index_dir / "build_info.json").read_text())
+        info = json.loads((settings.index_dir / "build_info.json").read_text(encoding="utf-8"))
         self.snapshot = info["snapshot"]
         self.info = info
         self.indexed_ids = set(info["document_ids"])
@@ -411,15 +412,58 @@ class Retriever:
             share = max(1, limit // len(document_ids))
             for doc_id in document_ids:
                 selected.extend(self.doc_chunks[doc_id][:share])
-        selected = selected[:limit]
+        selected = self._add_sibling_subsections(selected[:limit], limit)
         return {"passages": [self._passage(i) for i in selected]}
+
+    _SUB_ID = re.compile(r"^([A-Z])\.(\d{1,2})\b")
+
+    def _add_sibling_subsections(self, selected: list[int], limit: int) -> list[int]:
+        """Show a parallel sub-section next to a retrieved one.
+
+        RBI Directions sometimes split a rule by product or benchmark into parallel
+        sub-sections ("B.1 Reset ... under MCLR", "B.2 Reset ... under External Benchmarks").
+        Seeing only one invites applying its rule to the other's products. For the top two
+        passages, the opening chunk of each sibling sub-section is added right after it,
+        conservatively: only when the topic has at most four sub-sections (a genuine choice,
+        not a long list), at most two additions in total, and never displacing any of the
+        five highest-ranked passages.
+        """
+        result = list(selected)
+        protected = set(selected[:5])
+        added = 0
+        for index in selected[:2]:
+            chunk = self.chunks[index]
+            own = self._SUB_ID.match(chunk.subheading or "")
+            if not own:
+                continue
+            family: dict[str, int] = {}
+            for other in self.doc_chunks[chunk.document_id]:
+                sub = self.chunks[other].subheading or ""
+                match = self._SUB_ID.match(sub)
+                if match and match.group(1) == own.group(1):
+                    family.setdefault(sub, other)  # first chunk of each sub-section
+            if len(family) > 4:
+                continue
+            for sub, sibling in family.items():
+                if sub == chunk.subheading or sibling in result or added >= 2:
+                    continue
+                if len(result) >= limit:
+                    removable = [i for i in reversed(result) if i not in protected]
+                    if not removable:
+                        break
+                    result.remove(removable[0])
+                result.insert(result.index(index) + 1, sibling)
+                added += 1
+        return result[:limit]
 
     def _passage(self, index: int) -> dict:
         chunk = self.chunks[index]
         doc = self.catalog.get(chunk.document_id)
         url = doc.source_url
         url = f"{url}#page={chunk.page}"
-        section = chunk.section if not chunk.heading else f"{chunk.heading} | {chunk.section}"
+        # Chapter, sub-section and paragraph, e.g. "Chapter IV … | B.1 Reset … (MCLR) system | para 36".
+        # The sub-section tells the model which products or benchmarks a rule covers.
+        section = " | ".join(part for part in (chunk.heading, chunk.subheading, chunk.section) if part)
         return {
             "citation_id": chunk.chunk_id,
             "document_id": doc.document_id,

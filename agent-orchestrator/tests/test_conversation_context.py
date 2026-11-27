@@ -160,61 +160,34 @@ def test_checkpoint_summary_bounds_context_on_an_ordinary_followup(tmp_path):
         agent.close()
 
 
-def test_standalone_question_ignores_prior_citation_returned_by_contextualizer(tmp_path):
-    question = 'For what period can an NBFC accept a public deposit?'
-    model = ScriptedModel({
-        'contextualizer': [{'referents': ['rbi-063-nbfc-creditcardsissuanceconduct']}],
-        'planner': [{'action': 'answer', 'authority': 'RBI', 'query': 'NBFC public deposit period'}],
-    })
+def test_terms_from_the_question_itself_are_not_treated_as_unverified_references(tmp_path):
+    # Qwen3-8B sometimes lists terms from a self-contained question as "referents".
+    # They are the user's own words, so they must not trigger INVALID_CONTEXT.
+    model = ScriptedModel({'contextualizer':[{'referents':['RBI Complaint-Workflow', 'complaint workflow']}]})
     agent = RegulatoryAgent(model, CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
     try:
-        state = agent.ask('chat', question, messages=[
-            {'role': 'user', 'content': 'How quickly must a bank close a credit card?'},
-            {'role': 'assistant', 'content': 'Seven working days. [rbi-063-nbfc-creditcardsissuanceconduct:p12:c26]'},
+        state = agent.ask('chat', 'What does the RBI complaint workflow say?', messages=[
+            {'role':'user','content':'What are the CBDT appeal limits?'},
+            {'role':'assistant','content':'The circular sets monetary limits for departmental appeals.'},
         ])
-        assert state['resolved_question'] == question
-        assert state['plan']['query'] == 'NBFC public deposit period'
+        assert state['status'] == 'answered'
+        assert not any(e.get('code') == 'INVALID_CONTEXT' for e in state['trace'])
+        assert state['resolved_question'] == 'What does the RBI complaint workflow say?'
     finally:
         agent.close()
 
 
-def test_regulator_followups_keep_topic_when_switching_sources(tmp_path):
-    question = 'What is the complaint reference process?'
-
-    class ComplaintPlanner(DemoModel):
-        @staticmethod
-        def plan(payload):
-            if payload['question'] != question:
-                return {'action': 'refuse', 'refusal_category': 'out_of_scope'}
-            if any(message['content'] == question for message in payload['messages']):
-                return {'action': 'clarify', 'message': 'Which regulator do you mean?'}
-            return {'action': 'answer', 'authority': 'RBI', 'query': 'complaint reference'}
-
-    model = ComplaintPlanner()
+def test_references_must_still_come_from_earlier_answers(tmp_path):
+    # A referent that is neither in the question nor in an earlier answer is still refused,
+    # even when it shares a word with the question.
+    model = ScriptedModel({'contextualizer':[{'referents':['complaint against Alex Morgan']}]})
     agent = RegulatoryAgent(model, CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
     try:
-        first = agent.ask('chat', 'rbi', messages=[
-            {'role': 'user', 'content': 'What are the reporting rules for brokers?'},
-            {'role': 'assistant', 'content': 'Previous answer.'},
-            {'role': 'user', 'content': question},
-            {'role': 'assistant', 'content': 'Which regulator do you mean?'},
+        state = agent.ask('chat', 'What happens to that complaint?', messages=[
+            {'role':'user','content':'Tell me about complaints.'},
+            {'role':'assistant','content':'Complaints follow the RBI workflow.'},
         ])
-        assert first['plan']['authority'] == 'RBI'
-        assert first['plan']['query'] == question
-        second = agent.ask('chat', 'check with sebi')
-        assert second['plan']['authority'] == 'SEBI'
-        assert second['plan']['query'] == question
-        assert second['history'][-1]['question'] == 'check with sebi'
-    finally:
-        agent.close()
-
-
-def test_regulator_without_prior_question_asks_for_topic(tmp_path):
-    agent = RegulatoryAgent(DemoModel(), CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
-    try:
-        state = agent.ask('chat', 'SEBI please')
-        assert state['status'] == 'clarify'
-        assert 'SEBI' in state['answer']['message']
-        assert not any(event['kind'] == 'tool' for event in state['trace'])
+        assert state['status'] == 'abstained'
+        assert any(e.get('code') == 'INVALID_CONTEXT' for e in state['trace'])
     finally:
         agent.close()

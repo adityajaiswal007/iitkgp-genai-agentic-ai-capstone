@@ -64,7 +64,7 @@ def test_unrelated_file_cannot_supply_evidence(tmp_path):
 
 def team_cases(name):
     source = Path(__file__).with_name('fixtures') / f'{name}_cases.jsonl'
-    return [json.loads(line) for line in source.read_text().splitlines()]
+    return [json.loads(line) for line in source.read_text(encoding='utf-8').splitlines()]
 
 
 @pytest.mark.parametrize('case', team_cases('refusal'), ids=lambda case: case['id'])
