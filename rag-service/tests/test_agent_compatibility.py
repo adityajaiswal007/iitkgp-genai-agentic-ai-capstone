@@ -48,19 +48,37 @@ def test_rbi_responses_match_agent_schemas_exactly(client, retriever):
                                                     json={"document_ids": [card], "as_of": "2026-11-26"}).json())
 
 
-def test_agent_adapter_runs_all_three_tools_for_tax(adapter):
-    search = tools.tool_attempt(adapter, "search_documents",
-                                {"query": "Circular 17/2019 monetary limits departmental appeals",
-                                 "authority": "TAX", "limit": 3}, 15)
-    assert search.ok, search.error
-    ids = [h["document_id"] for h in search.data["hits"]]
-    assert ids[0] == "tax-circular-17-2019"
+def test_agent_adapter_rejects_tax_before_http(adapter):
+    search = tools.tool_attempt(adapter, 'search_documents', {
+        'query':'Circular 17/2019 monetary limits', 'authority':'TAX', 'limit':3,
+    }, 15)
+    assert not search.ok and search.error.code == 'INVALID_ARGUMENTS'
 
-    fetch = tools.tool_attempt(adapter, "fetch_passages", {"document_ids": ids, "query": "monetary limits"}, 15)
-    assert fetch.ok, fetch.error
-    assert all(p["authority"] == "TAX" for p in fetch.data["passages"])
 
-    status = tools.tool_attempt(adapter, "lookup_document_status", {"document_ids": ids, "as_of": "2026-11-26"}, 15)
-    assert status.ok, status.error
-    reasons = {d["document_id"]: d["reason"] for d in status.data["documents"]}
-    assert "1961" in reasons["tax-circular-17-2019"]  # legacy-regime note reaches the agent
+def test_agent_workflow_with_rag_catalog_cites_rbi_and_reports_missing_sebi(adapter, tmp_path):
+    from regulatory_agent.agent import RegulatoryAgent
+    from regulatory_agent.models import DemoModel
+
+    agent = RegulatoryAgent(DemoModel(), adapter, tmp_path/'agent.sqlite')
+    try:
+        rbi = agent.ask('rbi', 'What does RBI say about a bank credit card closure request?',
+                        as_of='2026-11-26')
+        assert rbi['status'] == 'answered'
+        assert all(source['authority'] == 'RBI' for source in rbi['answer']['sources'])
+        assert rbi['answer']['sources'][0]['corpus_snapshot'] != 'synthetic-v1'
+        assert [event['name'] for event in rbi['trace'] if event['kind']=='tool'] == [
+            'search_documents', 'fetch_passages', 'lookup_document_status',
+        ]
+
+        sebi = agent.ask('sebi', 'What does SEBI say about trading windows?', as_of='2026-11-26')
+        assert sebi['status'] == 'abstained'
+        assert sebi['answer']['claims'] == []
+        assert 'No matching SEBI documents were found' in sebi['answer']['limitations'][0]
+
+        both = agent.ask('both', 'Compare RBI credit card closure and SEBI trading window requirements.',
+                         as_of='2026-11-26')
+        assert both['status'] == 'answered'
+        assert {source['authority'] for source in both['answer']['sources']} == {'RBI'}
+        assert 'No applicable SEBI documents were available for this comparison.' in both['answer']['limitations']
+    finally:
+        agent.close()

@@ -122,6 +122,9 @@ test("waits one second, reveals chunks, and opens saved history without replayin
   await expect(
     page.getByRole("status", { name: "RBI/SEBI Copilot is typing" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Message RBI/SEBI Copilot" }),
+  ).toHaveValue("");
   await expect.poll(api.historyReads).toBeGreaterThan(0);
   await page.clock.runFor(999);
   await expect(page.locator(".assistant-message")).toHaveCount(0);

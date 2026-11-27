@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-Regulator = Literal['RBI', 'SEBI', 'TAX']  # TAX = Indian income-tax corpus (CBDT instruments and direct-tax Acts)
+Regulator = Literal['RBI', 'SEBI']
 Authority = Literal[Regulator, 'UPLOAD']
 PlanAuthority = Literal[Authority, 'BOTH']
 RefusalCategory = Literal['out_of_scope', 'personal_advice', 'action_request', 'personal_data', 'rule_evasion']
@@ -161,6 +161,8 @@ class AgentState(TypedDict):
     question: str
     private_input: bool
     resolved_question: str
+    topic_index: int | None
+    requested_authority: Regulator | None
     as_of: str
     fiscal_year: str | None
     history: list[dict]

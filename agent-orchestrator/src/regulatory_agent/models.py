@@ -15,10 +15,14 @@ ROLE_PROMPTS = {
 BASE_PROMPT = PROMPT_FILES.joinpath('shared.md').read_text(encoding='utf-8').strip()
 EXAMPLES = json.loads(PROMPT_FILES.joinpath('examples.json').read_text(encoding='utf-8'))
 ROLE_OUTPUT_TOKENS = {'planner':450, 'executor':900, 'critic':500, 'state_summary':350}
+TAX_TOPIC = re.compile(
+    r'\b(?:tax(?:es|ation)?|taxable|tax[- ]deductible|tds|tcs|cbdt|itat|gst|cgst|sgst|igst|'
+    r'capital gains?|vivad se vishwas)\b', re.I,
+)
 REVIEW_FIELDS = ('relevance', 'factual_support', 'citation_support', 'completeness', 'applicability')
 REFUSAL_MESSAGES = {
-    'out_of_scope': 'I can answer general questions about RBI and SEBI regulations and the income-tax documents in my corpus.',
-    'personal_advice': 'I can explain the general RBI, SEBI or income-tax rules. For advice about your situation, consult a qualified professional.',
+    'out_of_scope': 'I can answer general questions about RBI and SEBI regulations.',
+    'personal_advice': 'I can explain the general RBI or SEBI rules. For advice about your situation, consult a qualified professional.',
     'action_request': 'I can explain the regulatory procedure. This assistant is read-only.',
     'personal_data': 'Remove private identifiers and ask the general regulatory question again.',
     'rule_evasion': 'I can explain what the regulation requires and how to comply.',
@@ -35,15 +39,16 @@ class DemoModel:
             result = self.plan(payload)
         elif role == 'executor':
             applicable = {d['document_id'] for d in payload['document_status'] if d['status']=='applicable'}
-            claims = [{'text':p['text'][:1500], 'citations':[p['citation_id']]}
-                      for p in payload['evidence'] if p['document_id'] in applicable][:6]
-            supported = {p['authority'] for p in payload['evidence'] if p['document_id'] in applicable}
+            passages = [p for p in payload['evidence'] if p['document_id'] in applicable]
+            if TAX_TOPIC.search(payload['question'].split('\nFiles attached to the CURRENT message: ', 1)[0]):
+                # The demo search can match unrelated documents on common words.
+                passages = [p for p in passages if TAX_TOPIC.search(p['title'] + ' ' + p['text'])]
+            claims = [{'text':p['text'][:1500], 'citations':[p['citation_id']]} for p in passages[:6]]
+            supported = {p['authority'] for p in passages[:6]}
             partial = payload.get('authority') == 'BOTH' and supported != {'RBI', 'SEBI'}
             limitations = ['Fictional demonstration corpus; not actual regulatory guidance.'] if any(
                 p['corpus_snapshot'].startswith('synthetic') for p in payload['evidence']
             ) else []
-            if partial:
-                limitations.append('The available evidence covers only one of the requested regulators.')
             result = {'claims': claims, 'limitations': limitations,
                       'answer_status': ('partial' if partial else 'answered') if claims else 'not_found'}
         elif role == 'critic':
@@ -62,25 +67,32 @@ class DemoModel:
         question = payload['question']
         text = question.split('\nFiles attached to the CURRENT message: ', 1)[0].lower()
         regulators = regulators_in(text)
+        tax_question = bool(TAX_TOPIC.search(text))
         file_question = re.search(
             r'\b(?:attached|attachment|uploaded)\b|\b[\w.-]+\.(?:txt|md|csv|json|pdf|docx|xlsx|png|jpe?g|webp|gif)\b',
             text,
         )
         files = payload.get('uploaded_files', [])
         named_file = any(file['name'].lower() in text for file in files)
-        if files and (named_file or file_question):
+        if tax_question:
+            if not regulators:
+                if re.search(r'\b(?:banks?|banking|nbfcs?|fixed deposits?|term deposits?|fd|fds)\b', text):
+                    regulators.add('RBI')
+                if re.search(r'\b(?:mutual funds?|securities|stocks?|shares?|listed compan(?:y|ies))\b', text):
+                    regulators.add('SEBI')
+            authority = next(iter(regulators)) if len(regulators) == 1 else 'BOTH'
+        elif files and (named_file or file_question):
             authority = 'UPLOAD'
         elif {'RBI', 'SEBI'} <= regulators:
             authority = 'BOTH'  # BOTH means RBI and SEBI together
         else:
-            authority = next((r for r in ('RBI', 'SEBI', 'TAX') if r in regulators), None)
+            authority = next((r for r in ('RBI', 'SEBI') if r in regulators), None)
         refusal = None
         if re.search(r'\b(?:their|his|her|my)\s+(?:email(?: address)?|phone(?: number)?|aadhaar|pan|account number)\b', text):
             refusal = 'personal_data'
-        elif re.search(r'\b(?:irdai|pfrda|gst|cgst|stock market poem|write me a poem)\b', text):
+        elif re.search(r'\b(?:irdai|pfrda|stock market poem|write me a poem)\b', text):
             refusal = 'out_of_scope'
-        elif re.search(r'\bhow much (?:income[- ])?tax (?:will|should|do) i\b|\b(?:my|our) tax (?:liability|return|refund)\b|'
-                       r'\bold or new (?:tax )?regime\b', text):
+        elif re.search(r'\b(?:should i|should we)\b.*\b(?:tax regime|old or new regime)\b', text):
             refusal = 'personal_advice'
         elif re.search(r'\b(?:file|submit|send)\b.*\bfor me\b', text):
             refusal = 'action_request'
@@ -97,20 +109,17 @@ class DemoModel:
                 authority = 'RBI'
             elif re.search(r'\b(?:insider trading|stockbroker|listed company|mutual fund)\b', text):
                 authority = 'SEBI'
-            elif re.search(r'\b(?:income[- ]tax|cbdt|itat|tax tribunal|black money|vivad se vishwas|'
-                           r'faceless (?:assessment|appeal)|assessing officer|departmental appeals?)\b', text):
-                authority = 'TAX'
         if not authority and not file_question:
             prior = payload.get('summary', {}).get('authority')
             history = payload.get('history', [])
             prior = prior or (history[-1].get('authority') if history else None)
-            if prior in ('RBI', 'SEBI', 'TAX', 'BOTH', 'UPLOAD'):
+            if prior in ('RBI', 'SEBI', 'BOTH', 'UPLOAD'):
                 authority = prior
-        if file_question and not files:
+        if file_question and not files and not tax_question:
             return {'action':'refuse', 'refusal_category':'out_of_scope'}
         if not authority:
             if re.search(r'\b(?:what|which|how|is|does)\b.*\b(?:limit|allowed|follow-up|circular|rule)\b', text):
-                return {'action':'clarify', 'message':'Which RBI, SEBI or income-tax regulation or entity do you mean?'}
+                return {'action':'clarify', 'message':'Which RBI or SEBI regulation or entity do you mean?'}
             return {'action':'refuse', 'refusal_category':'out_of_scope'}
         return {'action':'answer', 'query':question[:1500], 'authority':authority}
 
