@@ -158,3 +158,63 @@ def test_checkpoint_summary_bounds_context_on_an_ordinary_followup(tmp_path):
         assert len(state['messages']) == 10
     finally:
         agent.close()
+
+
+def test_standalone_question_ignores_prior_citation_returned_by_contextualizer(tmp_path):
+    question = 'For what period can an NBFC accept a public deposit?'
+    model = ScriptedModel({
+        'contextualizer': [{'referents': ['rbi-063-nbfc-creditcardsissuanceconduct']}],
+        'planner': [{'action': 'answer', 'authority': 'RBI', 'query': 'NBFC public deposit period'}],
+    })
+    agent = RegulatoryAgent(model, CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
+    try:
+        state = agent.ask('chat', question, messages=[
+            {'role': 'user', 'content': 'How quickly must a bank close a credit card?'},
+            {'role': 'assistant', 'content': 'Seven working days. [rbi-063-nbfc-creditcardsissuanceconduct:p12:c26]'},
+        ])
+        assert state['resolved_question'] == question
+        assert state['plan']['query'] == 'NBFC public deposit period'
+    finally:
+        agent.close()
+
+
+def test_regulator_followups_keep_topic_when_switching_sources(tmp_path):
+    question = 'What is the complaint reference process?'
+
+    class ComplaintPlanner(DemoModel):
+        @staticmethod
+        def plan(payload):
+            if payload['question'] != question:
+                return {'action': 'refuse', 'refusal_category': 'out_of_scope'}
+            if any(message['content'] == question for message in payload['messages']):
+                return {'action': 'clarify', 'message': 'Which regulator do you mean?'}
+            return {'action': 'answer', 'authority': 'RBI', 'query': 'complaint reference'}
+
+    model = ComplaintPlanner()
+    agent = RegulatoryAgent(model, CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
+    try:
+        first = agent.ask('chat', 'rbi', messages=[
+            {'role': 'user', 'content': 'What are the reporting rules for brokers?'},
+            {'role': 'assistant', 'content': 'Previous answer.'},
+            {'role': 'user', 'content': question},
+            {'role': 'assistant', 'content': 'Which regulator do you mean?'},
+        ])
+        assert first['plan']['authority'] == 'RBI'
+        assert first['plan']['query'] == question
+        second = agent.ask('chat', 'check with sebi')
+        assert second['plan']['authority'] == 'SEBI'
+        assert second['plan']['query'] == question
+        assert second['history'][-1]['question'] == 'check with sebi'
+    finally:
+        agent.close()
+
+
+def test_regulator_without_prior_question_asks_for_topic(tmp_path):
+    agent = RegulatoryAgent(DemoModel(), CorpusTools(DEMO_DOCUMENTS), tmp_path/'state.sqlite')
+    try:
+        state = agent.ask('chat', 'SEBI please')
+        assert state['status'] == 'clarify'
+        assert 'SEBI' in state['answer']['message']
+        assert not any(event['kind'] == 'tool' for event in state['trace'])
+    finally:
+        agent.close()

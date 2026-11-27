@@ -19,6 +19,13 @@ from .grounding import (catalog_statuses, contains_private_value, label_evidence
 
 ABSTAIN_MESSAGE = 'I could not verify an answer from the available RBI and SEBI evidence.'
 TOOL_CHAIN = list(TOOL_SCHEMAS)
+REGULATOR_REPLY = re.compile(
+    r'(?:please\s+)?(?:(?:check|verify|search|look)\s+(?:(?:with|under|in)\s+)?'
+    r'|(?:use|under|according to|what about|how about)\s+)?'
+    r'(RBI|SEBI)(?:\s+(?:please|only|instead|too|as well))?[.!?]*',
+    re.I,
+)
+SOURCE_ID = re.compile(r'(?:[\w-]+:p\d+(?::c\d+)?|(?:rbi|sebi|tax)-\d+-[\w-]+)', re.I)
 
 
 class RegulatoryAgent:
@@ -169,6 +176,19 @@ class RegulatoryAgent:
             s.update(status='refused', route='finish', answer={
                 'claims':[], 'limitations':[], 'message':REFUSAL_MESSAGES['personal_data']})
             return s
+        regulator_reply = REGULATOR_REPLY.fullmatch(s['question'])
+        if regulator_reply and not s['current_attachment_ids']:
+            authority = regulator_reply[1].upper()
+            topic_index = next((i for i in range(len(s['messages'])-1, -1, -1)
+                                if s['messages'][i]['role']=='user' and s['messages'][i]['content'].strip()
+                                and not REGULATOR_REPLY.fullmatch(s['messages'][i]['content'].strip())), None)
+            if topic_index is None:
+                s.update(status='clarify', route='finish', answer={
+                    'claims':[], 'limitations':[], 'message':f'What would you like me to check with {authority}?'})
+            else:
+                s.update(resolved_question=s['messages'][topic_index]['content'].strip(),
+                         topic_index=topic_index, requested_authority=authority, route='planner')
+            return s
         if not s['messages'] or (s['current_attachment_ids'] and not re.search(r'\b(their|them|his|her|these people|those people)\b', s['question'], re.I)):
             s['route'] = 'planner'
             return s
@@ -179,7 +199,7 @@ class RegulatoryAgent:
             resolved = self.model_json(s, 'contextualizer', {
                 'question':s['question'], 'messages':messages, 'summary':s['summary'],
             }, ContextResolution)
-            referents = list(dict.fromkeys(resolved.referents))
+            referents = list(dict.fromkeys(name for name in resolved.referents if not SOURCE_ID.fullmatch(name.strip())))
             prior_answers = '\n'.join(m['content'] for m in s['messages'] if m['role']=='assistant').casefold()
             if any(contains_private_value(name) or name.casefold() not in prior_answers for name in referents):
                 raise ControlledStop('INVALID_CONTEXT', 'Could not verify the referenced entities in this conversation.')
@@ -203,10 +223,14 @@ class RegulatoryAgent:
 
     def planner(self, s):
         try:
+            # Classify the original topic before applying the requested regulator as a search filter.
+            regulator_followup = s['topic_index'] is not None
+            summary = {} if regulator_followup else s['summary']
+            messages = s['messages'][:s['topic_index']]
             plan = self.model_json(s, 'planner', {
-                'question':self.model_question(s), 'history':s['history'],
-                'messages':s['messages'][-4:] if s['summary'] else s['messages'],
-                'summary':s['summary'], 'as_of':s['as_of'], 'fiscal_year':s['fiscal_year'],
+                'question':self.model_question(s), 'history':[] if regulator_followup else s['history'],
+                'messages':messages[-4:] if summary else messages,
+                'summary':summary, 'as_of':s['as_of'], 'fiscal_year':s['fiscal_year'],
                 'feedback':s['feedback'], 'previous_plan':s['plan'],
                 'revision':s['revision'], 'uploaded_files':self.upload_catalog(s),
                 'remaining_attempts':self.limits.max_steps-s['steps']}, Plan)
@@ -216,13 +240,20 @@ class RegulatoryAgent:
                 s.update(plan={'action':plan.action}, status='clarify' if plan.action=='clarify' else 'refused',
                          route='finish', answer={'claims':[], 'limitations':[], 'message':message})
                 return s
+            if s['requested_authority']:
+                plan.authority = s['requested_authority']
             if plan.authority == 'UPLOAD' and not s['attachment_passages']:
                 raise ControlledStop('INVALID_PLAN', 'No RBI or SEBI attachment evidence is available.')
             if not plan.authority or not plan.query.strip() or plan.refusal_category:
                 raise ControlledStop('INVALID_PLAN', 'Planner did not supply a valid authority and search query.')
             plan.query = redact(plan.query.strip())
             if not s['revision']:
-                if s['resolved_question'] != s['question']:
+                if s['requested_authority']:
+                    topic = s['resolved_question']
+                    if len(topic) <= 1500:
+                        plan.alternative_queries = [plan.query, *plan.alternative_queries][:2]
+                        plan.query = topic
+                elif s['resolved_question'] != s['question']:
                     entities = s['resolved_question'].rsplit('\nReferenced entities: ', 1)[-1]
                     if len(entities) >= 1499:
                         raise ControlledStop('INVALID_CONTEXT', 'The referenced entities exceed the search query limit.')
@@ -335,7 +366,7 @@ class RegulatoryAgent:
         return {
             'question':self.model_question(s),
             'unavailable_authorities':missing,
-            'messages':[] if s['current_attachment_ids'] or s['summary'] else s['messages'],
+            'messages':[] if s['current_attachment_ids'] or s['summary'] else s['messages'][:s['topic_index']],
             'authority':s['plan']['authority'], 'as_of':s['as_of'], 'fiscal_year':s['fiscal_year'],
             'evidence':evidence, 'document_status':s['document_status'], 'uploaded_files':self.upload_catalog(s),
         }
@@ -496,7 +527,8 @@ class RegulatoryAgent:
             resolved_date = as_of or (history[-1]['as_of'] if history else date.today().isoformat())
             resolved_year = fiscal_year or (history[-1].get('fiscal_year') if history else None)
             state = AgentState(
-                question=clean_question, resolved_question=clean_question, as_of=resolved_date, fiscal_year=resolved_year,
+                question=clean_question, resolved_question=clean_question, topic_index=None, requested_authority=None,
+                as_of=resolved_date, fiscal_year=resolved_year,
                 private_input=contains_private_value(question), history=history, messages=transcript, summary=summary,
                 attachment_passages=redact(uploads),
                 current_attachment_ids=list(dict.fromkeys(p['document_id'] for p in uploads if p['document_id'] in current_ids)),
